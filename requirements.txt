@@ -1,0 +1,4 @@
+# Tello / RoboMaster TT camera stream (tello_camera_stream.py)
+# Install on a machine with internet before joining the drone Wi‑Fi.
+opencv-python>=4.8.0
+djitellopy>=2.5.0
