@@ -35,3 +35,19 @@ Before flying:
 - Clear at least 2 m around the drone and check there's room overhead (it climbs to ~80 cm on takeoff).
 - The drone holds position with its downward camera and sensor. Give it a well-lit floor with some texture (not glossy or plain carpet), or it will drift sideways even though the script only sends vertical commands.
 - Keep the battery above 25% (the script refuses below that).
+
+## Tello camera stream (local MJPEG + stats panel)
+
+Single-file HTTP server with an XGO-style layout: full-viewport camera feed and a top-right telemetry card (`/` → HTML, `/stream` → MJPEG, `/stats` → JSON).
+
+Install dependencies **while you still have internet** (the drone hotspot has no PyPI access), using the setup step above. Then join the drone's Wi-Fi and run:
+
+```bash
+.venv/bin/python tello_camera_stream.py
+```
+
+Open `http://127.0.0.1:8080/` in a browser.
+
+- Webcam / testing: `python tello_camera_stream.py --camera 0`
+- Verbose djitellopy UDP logs: `--verbose`
+- Throttle `wifi?` polls: `--wifi-interval 5` (seconds; `0` = every telemetry tick)
