@@ -22,9 +22,9 @@ For each leg the dog turns on the spot until the gyro says it faces the next way
 ## Before the first real walk
 
 - **Measure the walking speed.** `--walk-speed-cm` is cm/s at walk value 8 and has never been measured. Every 10% it's off puts the dog roughly 10% of the distance off.
-- **Stay by the dog.** If the laptop or network drops mid-walk, the Pi keeps running the last command; the bridge's `/command` handler has no timeout (the teleop receiver uses 0.5 s).
+- **Update the Pi.** The dog only stops by itself if the laptop goes quiet when the Pi runs the XGO repo's new `POST /command` handler (1 s watchdog). The follower resends its command every 0.25 s while the dog moves. Stay by the dog anyway.
 - The minimum turn speed that actually moves the legs (`MIN_TURN = 6`) is assumed, not measured.
-- Route waypoint 1 is pad A, where the drone lands. Clear the drone off the pad first, or start the dog elsewhere.
+- Route waypoint 1 is pad A, where the drone lands. `scripts/run_mission.py` skips it (the dog stands beside the pad) and asks you to lift the drone off first.
 
 ## Simulated dog (`sim_dog.py`)
 

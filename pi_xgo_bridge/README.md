@@ -1,10 +1,7 @@
 # Pi-side bridge files
 
-Copy these into your **`xgo_robot`** package on the Raspberry Pi (same folder as `http_stream.py`).
+`remote_command.py` validates the laptop's `{"walk": speed, "yaw": speed}` commands (XGO Lite limits ±25 and ±100, xgolib speed units) and applies them through `CommandWatchdog`, which **stops the dog if no command arrives for 1 s**, so a crashed laptop or dropped network can't leave it walking.
 
-1. Copy `remote_command.py` into `~/xgo_robot/remote_command.py`.
-2. In `http_stream.py`:
-   - Add `from .remote_command import apply_parsed_command, parse_remote_command`
-   - Add `do_POST` for `POST /command` and helper `_write_json` (see the Advanced CS Topics `xgo_robot/http_stream.py` in the coursework repo, or re-copy that file from a Pi-synced tree).
+The XGO repo (`ChampPhil/xgo_robot_kit_playing_fetch`, `scripts/xgo_robot/`) already has a copy of `remote_command.py` and the `POST /command` handler in `http_stream.py`. On the Pi, pull that repo and run `python3 main.py stream` (telemetry on): it serves `GET /stats` and `POST /command` for `tello_xgo_bridge`.
 
-After that, `python3 main.py stream` serves `GET /stats` and `POST /command` for `tello_xgo_bridge` on the laptop.
+If you change `remote_command.py` here, copy it to `scripts/xgo_robot/remote_command.py` in the XGO repo too (the files must stay identical).

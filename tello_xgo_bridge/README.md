@@ -12,12 +12,15 @@ bridge.open()
 bridge.tello.read()                 # battery, attitude, height, …
 bridge.tello.write("battery?")      # one Tello SDK text command
 bridge.xgo.read()                   # same JSON as the browser stats panel
-bridge.xgo.write(walk=0, yaw=0)     # stop the dog (or set walk mm + yaw deg/s)
+bridge.xgo.write(walk=0, yaw=0)     # stop the dog (or set walk/yaw speed values, below)
+bridge.tello.drone                  # the connected djitellopy.Tello, for mission pads, go moves …
 bridge.close()
 ```
 
 - **`read`** returns a `dict` with an `"ok"` flag.
 - **`write`** on the Tello takes one command **string**. **`write`** on the XGO takes **`walk`** and **`yaw`** numbers.
+- XGO **`walk`** and **`yaw`** are xgolib **speed values**, not millimetres or degrees: the dog keeps moving at that speed until the next command. XGO Lite ranges: walk −25…25 (`chase.py` uses 8), yaw −100…100, positive turns left (about 19°/s at 20 on our dog). Values outside the range are refused, on the laptop and on the Pi.
+- **The Pi stops the dog if no command arrives for 1 s** (`CommandWatchdog` in `pi_xgo_bridge/remote_command.py`). While the dog moves, resend the command several times a second; if your program crashes or the network drops, the dog stops by itself.
 - Only **one** program may control the Tello at a time. Do not run `tello_camera_stream.py` while `bridge.open()` is active.
 - On the Pi, start the HTTP server first: `python3 main.py stream` (port 8080).
 

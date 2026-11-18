@@ -10,6 +10,8 @@ Knows its true position and heading. Built from what's been measured on the real
   creep         deg/s the dog veers while walking straight (a guess)
   gyro_sign     +1 if the reported yaw grows turning left; the real sign isn't documented
   gyro_drift    deg/s the reported yaw drifts (0 normally; 7-19 seen in bad conditions)
+  watchdog      the Pi stops a moving dog when no command arrives for this long
+                (pi_xgo_bridge CommandWatchdog); `tripped` counts how often it did
 """
 
 import math
@@ -21,7 +23,7 @@ CM_PER_WALK_UNIT = 0.8
 class FakeXgo:
     def __init__(self, start=(0.0, 0.0), heading=0.0, start_delay=0.6, speed_error=0.0,
                  creep=0.0, gyro_sign=-1, gyro_drift=0.0, gyro_noise=0.3, seed=0,
-                 fail_after=None):
+                 fail_after=None, watchdog=1.0):
         self.x, self.y = float(start[0]), float(start[1])
         self.h = float(heading)                      # true heading, deg ccw from +x
         self.start_delay, self.speed_error, self.creep = start_delay, speed_error, creep
@@ -32,6 +34,7 @@ class FakeXgo:
         self.live_at = 0.0           # when the current command starts moving the legs
         self.fail_after = fail_after  # reads fail after this many seconds (lost link)
         self.writes = []
+        self.watchdog, self.last_write, self.tripped = watchdog, 0.0, 0
         self.trace = [(0.0, self.x, self.y, self.h)]
 
     # ---- the dog's physics -----------------------------------------------------------
@@ -50,6 +53,11 @@ class FakeXgo:
         walk, turn = self.cmd
         while dt > 1e-9:
             step = min(dt, 0.05)
+            if (self.watchdog and self.cmd != (0.0, 0.0)
+                    and self.t - self.last_write > self.watchdog):
+                self.cmd = (0.0, 0.0)          # the Pi's watchdog stops the dog
+                self.tripped += 1
+                walk, turn = self.cmd
             if self.t >= self.live_at:
                 rate = math.copysign(self.deg_per_s(turn), turn)
                 if walk:
@@ -82,6 +90,7 @@ class FakeXgo:
         self._advance(0.05)
         stopped = self.cmd == (0.0, 0.0)
         self.cmd = (float(walk), float(yaw))
+        self.last_write = self.t
         if stopped and self.cmd != (0.0, 0.0):
             self.live_at = self.t + self.start_delay
         self.writes.append((round(self.t, 2), self.cmd))

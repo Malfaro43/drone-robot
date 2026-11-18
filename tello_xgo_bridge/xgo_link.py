@@ -6,6 +6,13 @@ Purpose:
     existing HTTP server. ``read`` uses ``GET /stats``. ``write`` posts walk and
     yaw to ``POST /command``.
 
+    ``walk`` and ``yaw`` are xgolib **speed values**, not a distance or an angle:
+    the dog keeps moving at that speed until the next command. XGO Lite ranges
+    are walk -25..25 (``chase.py`` uses 8) and yaw -100..100, positive = left
+    (about 19 deg/s at 20 on our dog). The Pi stops the dog if no command
+    arrives for 1 s (``pi_xgo_bridge.CommandWatchdog``), so while the dog moves,
+    resend the command several times a second.
+
 Key terms:
     - pi_url: Base URL such as ``http://100.x.x.x:8080`` (no trailing path).
     - Stats JSON: The same payload the live browser panel uses.
@@ -21,6 +28,9 @@ import json
 import urllib.error
 import urllib.request
 from typing import Any
+
+WALK_MAX = 25.0   # XGO Lite xgolib speed limits (same as pi_xgo_bridge.remote_command)
+YAW_MAX = 100.0
 
 
 class XgoLink:
@@ -58,12 +68,16 @@ class XgoLink:
             return {"ok": False, "error": "Pi returned non-JSON from /stats."}
 
     def write(self, walk: float = 0.0, yaw: float = 0.0) -> dict[str, Any]:
-        """Post ``{"walk": mm, "yaw": deg/s}`` to ``POST /command``.
+        """Post ``{"walk": speed, "yaw": speed}`` to ``POST /command``.
 
-        :param walk: Forward millimeters on the X axis.
-        :param yaw: Yaw degrees per second.
-        :returns: Parsed JSON response from the Pi.
+        :param walk: Forward speed value, -25..25 (xgolib ``move('x')`` units).
+        :param yaw: Turn speed value, -100..100, positive = left (xgolib ``turn``).
+        :returns: Parsed JSON response from the Pi, or ``{"ok": False, ...}``.
         """
+
+        if abs(walk) > WALK_MAX or abs(yaw) > YAW_MAX:
+            return {"ok": False, "error": f"walk must be within ±{WALK_MAX:g} and yaw within "
+                                          f"±{YAW_MAX:g} (xgolib speed values); not sent."}
 
         url = f"{self._base}/command"
         body = json.dumps({"walk": walk, "yaw": yaw}).encode("utf-8")

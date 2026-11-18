@@ -103,6 +103,19 @@ class FollowTests(unittest.TestCase):
         self.assertFalse(dog.moving)
         self.assertLess(math.hypot(dog.x, dog.y), 1)    # never moved
 
+    def test_never_trips_the_pi_watchdog(self):
+        for route in (L_ROUTE, [(0, 0), (0, 60), (0, 0), (0, -60)]):
+            dog, _ = run(route=route)
+            self.assertEqual(dog.tripped, 0)
+
+    def test_sim_watchdog_stops_a_silent_laptop(self):
+        dog = FakeXgo()
+        dog.write(walk=8, yaw=0)
+        dog.sleep(3.0)
+        self.assertFalse(dog.moving)
+        self.assertEqual(dog.tripped, 1)
+        self.assertLess(dog.x, 0.8 * 8 * 1.2)    # walked ~0.5 s, not 3 s
+
     def test_wrap(self):
         self.assertEqual(wrap(190), -170)
         self.assertEqual(wrap(-190), 170)

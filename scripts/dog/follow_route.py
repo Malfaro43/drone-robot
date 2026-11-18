@@ -111,12 +111,22 @@ class RouteFollower:
     def stop(self) -> None:
         self.xgo.write(walk=0, yaw=0)
 
+    def hold(self, walk: float, yaw: float, seconds: float) -> None:
+        """Keep a command running for `seconds`, resending it every TICK: the Pi stops
+        the dog if no command arrives for 1 s (pi_xgo_bridge CommandWatchdog)."""
+        end = self.clock() + seconds
+        while True:
+            self.drive(walk, yaw)
+            left = end - self.clock()
+            if left <= 0:
+                return
+            self.sleep(min(TICK, left))
+
     # ---- heading -------------------------------------------------------------------
     def learn_sign(self) -> None:
         """Short left turn: which way does the gyro count?"""
         before = self.raw_yaw()
-        self.drive(0, self.turn)
-        self.sleep(START_DELAY + 1.0)
+        self.hold(0, self.turn, START_DELAY + 1.0)
         self.stop()
         self.sleep(0.5)
         change = wrap(self.raw_yaw() - before)
@@ -142,8 +152,8 @@ class RouteFollower:
             if self.clock() > end:
                 raise FollowError(f"couldn't turn to {target:.0f} deg ({err:.0f} deg off)")
             speed = max(MIN_TURN, min(self.turn, abs(err)))
-            self.drive(0, math.copysign(speed, err))       # positive turn = left = ccw
-            self.sleep(START_DELAY if abs(err) > 30 else TICK)
+            # positive turn = left = ccw
+            self.hold(0, math.copysign(speed, err), START_DELAY if abs(err) > 30 else TICK)
 
     # ---- walking -------------------------------------------------------------------
     def walk_to(self, gx: float, gy: float) -> None:

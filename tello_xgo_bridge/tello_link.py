@@ -86,6 +86,19 @@ class TelloLink:
             self._drone = None
             self._open = False
 
+    @property
+    def drone(self) -> Any:
+        """The connected ``djitellopy.Tello``, for code that needs more than read/write
+        (e.g. mission pads, the downward distance sensor, ``go`` moves). Still one
+        controller: don't send commands through it and ``write`` at the same time.
+
+        :raises RuntimeError: When the link isn't open.
+        """
+
+        if not self._open or self._drone is None:
+            raise RuntimeError("Tello not connected. Call open() first.")
+        return self._drone
+
     def read(self) -> dict[str, Any]:
         """Return battery, attitude, height, and related fields.
 

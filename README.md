@@ -86,6 +86,18 @@ Not yet confirmed on the drone (check these before trusting a full run):
 
 Pad A only catches drift that doesn't cancel out on the way home. If every move overshoots by the same fraction, the overshoot cancels on the return and only checkpoint pads (`--pad`) can catch it.
 
+## Whole mission (`scripts/run_mission.py`)
+
+Drone search and route check, then the dog walks the route, all through `tello_xgo_bridge`. It checks the dog answers before flying, stops if the route isn't fully checked, and asks you to lift the drone off pad A before the dog moves.
+
+```bash
+.venv/bin/python scripts/run_mission.py --sim                     # simulated drone and dog
+.venv/bin/python scripts/run_mission.py --pi http://100.74.30.90:8080 --target 2 \
+    --forward 200 --left 80 --right 60 --dog-width 30 --walk-speed-cm 6.5
+```
+
+The dog's walking speed (`--walk-speed-cm`, cm/s at walk 8) has not been measured yet. See `scripts/dog/README.md`.
+
 ## Tello + XGO bridge (`tello_xgo_bridge`)
 
 Laptop package that talks to **both** the Tello and the XGO Pi with the same `read` / `write` API. See `tello_xgo_bridge/README.md` for hardware (Wi‑Fi + USB Ethernet) and routing.
