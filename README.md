@@ -82,3 +82,25 @@ Not yet confirmed on the drone (check these before trusting a full run):
 - How much floor the pad camera sees, which sets `--lanes` (default 40 cm).
 
 Pad A only catches drift that doesn't cancel out on the way home. If every move overshoots by the same fraction, the overshoot cancels on the return and only checkpoint pads (`--pad`) can catch it.
+
+## Tello + XGO bridge (`tello_xgo_bridge`)
+
+Laptop package that talks to **both** the Tello and the XGO Pi with the same `read` / `write` API. See `tello_xgo_bridge/README.md` for hardware (Wi‑Fi + USB Ethernet) and routing.
+
+```bash
+pip install -r requirements.txt
+python -m tello_xgo_bridge routes apply   # Administrator / sudo after joining Tello Wi‑Fi
+```
+
+```python
+from tello_xgo_bridge import TelloXgoBridge
+bridge = TelloXgoBridge(pi_url="http://100.x.x.x:8080")
+bridge.open()
+bridge.tello.read()
+bridge.xgo.write(walk=0, yaw=0)
+bridge.close()
+```
+
+Pi gait over the network: copy `pi_xgo_bridge/remote_command.py` into your Pi `xgo_robot` folder and merge the `POST /command` handler into `http_stream.py` (see `pi_xgo_bridge/README.md`).
+
+Tests: `python -m pytest tello_xgo_bridge/tests -q -p no:asyncio -p no:anyio`
