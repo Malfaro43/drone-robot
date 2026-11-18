@@ -19,10 +19,10 @@ import time
 
 from djitellopy import Tello
 
-MIN_BATTERY = 25      # percent; the drone itself refuses takeoff below ~10%
+from flight_common import MAX_TEMP_C, countdown, land_now, preflight
+
 MAX_CLIMB_CM = 50     # keep indoor tests low; SDK allows 20-500
 MIN_CLIMB_CM = 20     # SDK minimum for move_up/move_down
-MAX_TEMP_C = 90       # refuse takeoff if the drone is this hot (it heats up idling on the ground)
 
 
 def status(tello: Tello, label: str) -> None:
@@ -59,26 +59,13 @@ def main() -> int:
         tello.end()
         return 0
 
-    battery = tello.get_battery()
-    if battery < MIN_BATTERY:
-        print(f"Battery {battery}% is below {MIN_BATTERY}%, charge before flying.")
+    problem = preflight(tello, ignore_temp=args.ignore_temp)
+    if problem:
+        print(problem)
         tello.end()
         return 1
 
-    temp = tello.get_highest_temperature()
-    if temp >= MAX_TEMP_C and args.ignore_temp:
-        print(f"WARNING: drone is at {temp}C (limit {MAX_TEMP_C}C), flying anyway (--ignore-temp).")
-    elif temp >= MAX_TEMP_C:
-        print(f"Drone is at {temp}C (limit {MAX_TEMP_C}C). Power it off to cool before flying.")
-        tello.end()
-        return 1
-
-    try:
-        for remaining in range(args.countdown, 0, -1):
-            print(f"Taking off in {remaining}... (Ctrl+C to cancel)")
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\nCancelled before takeoff. Nothing flew.")
+    if not countdown(args.countdown):
         tello.end()
         return 130
 
@@ -119,11 +106,7 @@ def main() -> int:
         return 1
     finally:
         if flying:
-            try:
-                tello.land()
-            except Exception as exc:
-                print(f"Land command failed: {exc!r}. Grab the drone or use the "
-                      f"power button; 'tello.emergency()' cuts motors instantly.")
+            land_now(tello)
         tello.end()
 
 

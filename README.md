@@ -51,3 +51,34 @@ Open `http://127.0.0.1:8080/` in a browser.
 - Webcam / testing: `python tello_camera_stream.py --camera 0`
 - Verbose djitellopy UDP logs: `--verbose`
 - Throttle `wifi?` polls: `--wifi-interval 5` (seconds; `0` = every telemetry tick)
+
+## Find a pad and map the dog's route (`scripts/search/`)
+
+The drone takes off from mission pad A beside the dog and sweeps the floor in lanes until it sees the target mission pad. On the way it marks every 20 cm square as free or blocked using its downward distance sensor. It then works out the dog's route home, keeping half the dog's width plus `--margin` away from anything blocked, and flies that route to check each square, re-planning if one turns out blocked. Back over pad A it measures how far its tracking drifted and corrects the whole map, then lands. The map and route for the dog are printed and saved to `--out` (`map.json`). Sending them to the dog comes later, through the link module.
+
+Lay-out:
+- Pad A goes beside the dog, with its rocket pointing the way the dog faces. That is the map's +x; +y is left.
+- Every other pad (target, checkpoints) also has its rocket pointing the same way.
+- Put the drone on pad A, nose along the rocket. Give it a well-lit, textured floor.
+
+```bash
+.venv/bin/python scripts/search/find_pad.py --check    # no flight: live pad ID/offset, floor distance, yaw
+.venv/bin/python scripts/search/find_pad.py --target 2 --forward 200 --left 60 --right 60 --dog-width 30
+.venv/bin/python scripts/search/find_pad.py ... --pad 3=100,0   # extra pad at a measured spot, fixes drift
+.venv/bin/python -m unittest discover -s scripts/search
+```
+
+To watch a run without the drone, `scripts/search/simulate.py` flies the same mission code against a simulated drone in a made-up room and opens a replay page (`sim.html`). It shows where the drone really is versus where it thinks it is, the squares it marks, the dog's route, and the squares beside the route it never checked.
+
+```bash
+.venv/bin/python scripts/search/simulate.py --list                 # room, box, drift, overshoot
+.venv/bin/python scripts/search/simulate.py --scenario drift
+.venv/bin/python scripts/search/simulate.py --scenario random --seed 7
+```
+
+Not yet confirmed on the drone (check these before trusting a full run):
+- Which way the pad x/y offsets and `go` y-axis point (`PAD_X_SIGN`/`PAD_Y_SIGN` in `tracker.py`, `GO_Y_SIGN` in `find_pad.py`). Use `--check` and slide the drone over a pad by hand.
+- Whether the drone climbs by itself over a box, which would hide the box from the distance sensor. `map.json` logs distance, height and barometer at every step for this.
+- How much floor the pad camera sees, which sets `--lanes` (default 40 cm).
+
+Pad A only catches drift that doesn't cancel out on the way home. If every move overshoots by the same fraction, the overshoot cancels on the return and only checkpoint pads (`--pad`) can catch it.

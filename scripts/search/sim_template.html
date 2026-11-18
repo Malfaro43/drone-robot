@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pad search replay</title>
+<style>
+:root {
+  --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1f22; --muted: #6a6e74; --line: #dcdad3;
+  --grid: #e7e5de; --free: #cfe8d5; --blocked: #e9806a; --unknown: transparent;
+  --truth: #7a5a2e; --drop: #3f6fb0; --pad: #2b2f36; --target: #b8324f;
+  --drone: #1d1f22; --est: #2f7de1; --trail: #9aa0a6; --route: #2f9e62; --dog: #c77a14;
+  --accent: #2f7de1; --chip: #eceae4; --warn: #d98a00;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15171a; --panel: #1d2024; --ink: #e8e6e1; --muted: #9a9ea5; --line: #30343a;
+    --grid: #262a2f; --free: #234a33; --blocked: #b85b47; --truth: #d2a868; --drop: #6f9de0;
+    --pad: #d9d6cf; --target: #ef6f8b; --drone: #f2f0ea; --est: #63a4ff; --trail: #5d636b;
+    --route: #4cc483; --dog: #f0a43c; --accent: #63a4ff; --chip: #2a2e34; --warn: #f2b33d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15171a; --panel: #1d2024; --ink: #e8e6e1; --muted: #9a9ea5; --line: #30343a;
+  --grid: #262a2f; --free: #234a33; --blocked: #b85b47; --truth: #d2a868; --drop: #6f9de0;
+  --pad: #d9d6cf; --target: #ef6f8b; --drone: #f2f0ea; --est: #63a4ff; --trail: #5d636b;
+  --route: #4cc483; --dog: #f0a43c; --accent: #63a4ff; --chip: #2a2e34; --warn: #f2b33d;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.45 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif; }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 20px 16px 32px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 14px; }
+h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+.about { color: var(--muted); margin: 0; flex-basis: 100%; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+@media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.stage { padding: 12px; }
+canvas { display: block; width: 100%; border-radius: 6px; }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+button, select { font: inherit; color: var(--ink); background: var(--chip); border: 1px solid var(--line);
+  border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; min-width: 72px; }
+button:disabled { opacity: .45; cursor: default; }
+input[type=range] { flex: 1 1 200px; accent-color: var(--accent); }
+.toggles { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; color: var(--muted); }
+.toggles label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.side { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+.step { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.phase { background: var(--chip); border-radius: 999px; padding: 3px 10px; font-weight: 600; }
+.muted { color: var(--muted); }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 6px; }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; font-variant-numeric: tabular-nums; }
+dt { color: var(--muted); } dd { margin: 0; text-align: right; }
+.legend { display: grid; grid-template-columns: 18px 1fr; gap: 5px 8px; align-items: center; font-size: 12px; }
+.sw { width: 14px; height: 14px; border-radius: 3px; }
+.log { max-height: 190px; overflow: auto; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--bg); border-radius: 6px; padding: 8px; margin: 0; white-space: pre-wrap; }
+.log .now { color: var(--accent); }
+.result { display: grid; gap: 4px; }
+.status { font-weight: 600; color: var(--route); }
+.result.bad .status { color: var(--blocked); }
+kbd { font: 12px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Pad search replay</h1>
+    <span class="muted" id="scenario"></span>
+    <p class="about" id="about"></p>
+  </header>
+  <div class="layout">
+    <section class="card stage">
+      <canvas id="map" aria-label="Top-down view of the drone's search"></canvas>
+      <div class="controls">
+        <button id="prev" title="Step back (←)">◀</button>
+        <button id="play" class="primary" title="Play / pause (space)">Play</button>
+        <button id="next" title="Step forward (→)">▶</button>
+        <input id="scrub" type="range" min="0" value="0" aria-label="Step">
+        <select id="speed" aria-label="Speed">
+          <option value="250">1×</option><option value="120" selected>2×</option>
+          <option value="50">5×</option>
+        </select>
+        <button id="dog" disabled title="Walk the dog along the route">Walk the dog</button>
+      </div>
+      <div class="toggles">
+        <label><input type="checkbox" id="showTruth" checked> real obstacles</label>
+        <label><input type="checkbox" id="showTrue" checked> where the drone really is</label>
+        <label><input type="checkbox" id="showCorrected" checked> corrected track (end)</label>
+      </div>
+    </section>
+    <aside class="card side">
+      <div class="step"><span class="phase" id="phase"></span><span class="muted" id="count"></span></div>
+      <div>
+        <h2>Position (cm, from pad A)</h2>
+        <dl>
+          <dt>Drone thinks</dt><dd id="est"></dd>
+          <dt>Really at</dt><dd id="real"></dd>
+          <dt>Tracking error</dt><dd id="err"></dd>
+          <dt>Target estimate</dt><dd id="tgt"></dd>
+        </dl>
+      </div>
+      <div id="resultBox" hidden>
+        <h2>Result</h2>
+        <div class="result" id="result"></div>
+      </div>
+      <div>
+        <h2>Log</h2>
+        <pre class="log" id="log"></pre>
+      </div>
+      <div>
+        <h2>Key</h2>
+        <div class="legend">
+          <span class="sw" style="background:var(--free)"></span><span>marked free by the drone</span>
+          <span class="sw" style="background:var(--blocked)"></span><span>marked blocked (box or drop)</span>
+          <span class="sw" style="border:2px dashed var(--truth)"></span><span>real box (the drone can't see this)</span>
+          <span class="sw" style="border:2px dashed var(--drop)"></span><span>real step down</span>
+          <span class="sw" style="background:var(--drone);border-radius:50%"></span><span>drone, real position</span>
+          <span class="sw" style="border:2px solid var(--est);border-radius:50%"></span><span>drone, where it thinks it is</span>
+          <span class="sw" style="background:var(--route);opacity:.5"></span><span>dog's route + clearance</span>
+          <span class="sw" style="border:2px solid var(--warn)"></span><span>beside the route, never checked</span>
+          <span class="sw" style="background:var(--dog)"></span><span>dog</span>
+        </div>
+      </div>
+      <p class="muted" style="margin:0;font-size:12px">Up = forward from pad A, left = left. Grid squares are
+        <span id="cellcm"></span> cm. <kbd>space</kbd> play, <kbd>←</kbd><kbd>→</kbd> step.</p>
+    </aside>
+  </div>
+</div>
+<script>
+const D = /*SIM_DATA*/null;
+const $ = (id) => document.getElementById(id);
+const canvas = $("map"), ctx = canvas.getContext("2d");
+const F = D.frames, last = F.length - 1, C = D.cell;
+let k = 0, timer = null, dogT = null, dogAnim = null;
+
+$("scenario").textContent = D.name;
+$("about").textContent = D.about;
+$("cellcm").textContent = C;
+$("scrub").max = last;
+
+// world bounds (map frame: +x forward = up on screen, +y left = left on screen)
+const pts = [...F.map(f => f.true), ...F.map(f => f.est), [0, 0]];
+let xmin = (D.area.i[0] - 1) * C, xmax = (D.area.i[1] + 1) * C;
+let ymin = (D.area.j[0] - 1) * C, ymax = (D.area.j[1] + 1) * C;
+for (const [x, y] of pts) { xmin = Math.min(xmin, x - 20); xmax = Math.max(xmax, x + 20);
+  ymin = Math.min(ymin, y - 20); ymax = Math.max(ymax, y + 20); }
+for (const b of D.boxes) { xmin = Math.min(xmin, b[0]); xmax = Math.max(xmax, b[1]);
+  ymin = Math.min(ymin, b[2]); ymax = Math.max(ymax, b[3]); }
+
+let S = 1, PAD = 28, W = 0, H = 0;
+function layout() {
+  const w = canvas.parentElement.clientWidth - 24;
+  const aspect = (xmax - xmin) / (ymax - ymin);
+  const h = Math.min(Math.max(320, w * aspect), window.innerHeight * 0.78);
+  const dpr = window.devicePixelRatio || 1;
+  canvas.style.height = h + "px";
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  W = w; H = h;
+  S = Math.min((W - 2 * PAD) / (ymax - ymin), (H - 2 * PAD) / (xmax - xmin));
+}
+const ox = () => (W - (ymax - ymin) * S) / 2, oy = () => (H - (xmax - xmin) * S) / 2;
+const sx = (y) => ox() + (ymax - y) * S;
+const sy = (x) => oy() + (xmax - x) * S;
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+function rectWorld(x0, x1, y0, y1) { return [sx(y1), sy(x1), (y1 - y0) * S, (x1 - x0) * S]; }
+
+function drawGrid(rows) {
+  const i0 = D.area.i[0], j0 = D.area.j[0];
+  const col = { ".": css("--free"), "#": css("--blocked") };
+  rows.forEach((row, a) => [...row].forEach((ch, b) => {
+    const cx = (i0 + a) * C, cy = (j0 + b) * C;
+    const [x, y, w, h] = rectWorld(cx - C / 2, cx + C / 2, cy - C / 2, cy + C / 2);
+    if (col[ch]) { ctx.fillStyle = col[ch]; ctx.fillRect(x + .5, y + .5, w - 1, h - 1); }
+    ctx.strokeStyle = css("--grid"); ctx.lineWidth = 1; ctx.strokeRect(x + .5, y + .5, w - 1, h - 1);
+  }));
+  // search area outline
+  const [x, y, w, h] = rectWorld((i0 - .5) * C, (D.area.i[1] + .5) * C, (j0 - .5) * C, (D.area.j[1] + .5) * C);
+  ctx.strokeStyle = css("--muted"); ctx.setLineDash([2, 4]); ctx.strokeRect(x, y, w, h); ctx.setLineDash([]);
+}
+
+function drawTruth() {
+  for (const [x0, x1, y0, y1, hgt] of D.boxes) {
+    const [x, y, w, h] = rectWorld(x0, x1, y0, y1);
+    ctx.strokeStyle = hgt < 0 ? css("--drop") : css("--truth");
+    ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.strokeRect(x, y, w, h); ctx.setLineDash([]);
+    ctx.fillStyle = ctx.strokeStyle; ctx.font = "11px ui-sans-serif, system-ui";
+    ctx.fillText(hgt < 0 ? `step ${-hgt} cm` : `box ${hgt} cm`, x + 4, y + 13);
+  }
+}
+
+function drawPads() {
+  for (const [id, [px, py]] of Object.entries(D.pads)) {
+    const isTarget = +id === D.target_pad, isOrigin = +id === D.origin_pad;
+    const [x, y, w, h] = rectWorld(px - 10, px + 10, py - 10, py + 10);
+    ctx.fillStyle = isTarget ? css("--target") : css("--pad");
+    ctx.globalAlpha = .9; ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1;
+    // rocket direction (+x) tick
+    ctx.strokeStyle = css("--panel"); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(sx(py), sy(px)); ctx.lineTo(sx(py), sy(px + 8)); ctx.stroke();
+    ctx.fillStyle = css("--ink"); ctx.font = "600 11px ui-sans-serif, system-ui";
+    const label = isOrigin ? `pad ${id} · A` : isTarget ? `pad ${id} · target`
+      : `pad ${id}${D.known_pads.includes(id) ? " · checkpoint" : ""}`;
+    ctx.fillText(label, x + w + 4, y + h / 2 + 4);
+  }
+}
+
+function path(points, color, width, dash) {
+  if (points.length < 2) return;
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash(dash || []);
+  ctx.beginPath(); ctx.moveTo(sx(points[0][1]), sy(points[0][0]));
+  for (const [x, y] of points.slice(1)) ctx.lineTo(sx(y), sy(x));
+  ctx.stroke(); ctx.setLineDash([]);
+}
+
+function drawRoute() {
+  const r = D.map.route; if (!r.length) return;
+  const band = 2 * D.clearance * S;
+  ctx.lineJoin = ctx.lineCap = "round";
+  ctx.globalAlpha = .22; path(r, css("--route"), band); ctx.globalAlpha = 1;
+  path(r, css("--route"), 2.5, D.map.route_checked ? [] : [6, 5]);
+  ctx.lineJoin = ctx.lineCap = "butt";
+}
+
+function drawUnchecked() {
+  ctx.strokeStyle = css("--warn"); ctx.lineWidth = 2;
+  for (const [x, y] of D.map.unchecked_beside_route || []) {
+    const [rx, ry, w, h] = rectWorld(x - C / 2, x + C / 2, y - C / 2, y + C / 2);
+    ctx.strokeRect(rx + 2, ry + 2, w - 4, h - 4);
+    ctx.beginPath(); ctx.moveTo(rx + 2, ry + h - 2); ctx.lineTo(rx + w - 2, ry + 2); ctx.stroke();
+  }
+}
+
+function drawDog(t) {
+  const r = D.map.route; if (!r.length) return;
+  // position along the polyline at fraction t
+  const seg = []; let total = 0;
+  for (let i = 1; i < r.length; i++) { const l = Math.hypot(r[i][0] - r[i-1][0], r[i][1] - r[i-1][1]); seg.push(l); total += l; }
+  let d = t * total, i = 0;
+  while (i < seg.length - 1 && d > seg[i]) { d -= seg[i]; i++; }
+  const a = r[i], b = r[Math.min(i + 1, r.length - 1)], f = seg[i] ? d / seg[i] : 0;
+  const x = a[0] + (b[0] - a[0]) * f, y = a[1] + (b[1] - a[1]) * f;
+  const ang = Math.atan2(-(b[0] - a[0]), -(b[1] - a[1]));  // screen angle of travel
+  const len = D.dog_width * 1.4 * S, wid = D.dog_width * S;
+  ctx.save(); ctx.translate(sx(y), sy(x)); ctx.rotate(ang);
+  ctx.fillStyle = css("--dog");
+  ctx.beginPath(); ctx.roundRect(-len / 2, -wid / 2, len, wid, wid * .3); ctx.fill();
+  ctx.beginPath(); ctx.arc(len / 2, 0, wid * .28, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+function crosshair(x, y, color) {
+  const X = sx(y), Y = sy(x);
+  ctx.strokeStyle = color; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(X, Y, 9, 0, Math.PI * 2); ctx.moveTo(X - 14, Y); ctx.lineTo(X + 14, Y);
+  ctx.moveTo(X, Y - 14); ctx.lineTo(X, Y + 14); ctx.stroke();
+}
+
+function draw() {
+  const f = F[k], end = k === last;
+  ctx.fillStyle = css("--panel"); ctx.fillRect(0, 0, W, H);
+  drawGrid(f.grid);
+  if ($("showTruth").checked) drawTruth();
+  drawPads();
+  const upto = F.slice(0, k + 1);
+  if (end) { drawRoute(); drawUnchecked(); }
+  if ($("showTrue").checked) path(upto.map(f => f.true), css("--trail"), 1.5);
+  path(upto.map(f => f.est), css("--est"), 1.5, [4, 4]);
+  if (end && $("showCorrected").checked) path(D.corrected, css("--est"), 2.5);
+  if (f.target) crosshair(f.target[0], f.target[1], css("--target"));
+  // drone: estimate ring, true dot, link
+  const [ex, ey] = f.est, [tx, ty] = f.true;
+  if ($("showTrue").checked) {
+    ctx.strokeStyle = css("--muted"); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(sx(ey), sy(ex)); ctx.lineTo(sx(ty), sy(tx)); ctx.stroke();
+    ctx.fillStyle = css("--drone"); ctx.beginPath(); ctx.arc(sx(ty), sy(tx), 6, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.strokeStyle = css("--est"); ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.arc(sx(ey), sy(ex), 10, 0, Math.PI * 2); ctx.stroke();
+  if (end && dogT !== null) drawDog(dogT);
+  else if (end) drawDog(0);
+}
+
+const fmt = (p) => p ? `${p[0].toFixed(0)}, ${p[1].toFixed(0)}` : "–";
+function panel() {
+  const f = F[k];
+  $("phase").textContent = f.phase;
+  $("count").textContent = `step ${k} / ${last}`;
+  $("est").textContent = fmt(f.est);
+  $("real").textContent = fmt(f.true);
+  $("err").textContent = `${Math.hypot(f.est[0] - f.true[0], f.est[1] - f.true[1]).toFixed(0)} cm`;
+  $("tgt").textContent = fmt(f.target);
+  const lines = [];
+  F.slice(0, k + 1).forEach((fr, i) => fr.log.forEach(t => lines.push([i, t])));
+  $("log").innerHTML = lines.map(([i, t]) =>
+    `<span class="${i === k ? "now" : ""}">${t.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</span>`).join("\n");
+  $("log").scrollTop = $("log").scrollHeight;
+  const end = k === last;
+  $("resultBox").hidden = !end;
+  $("dog").disabled = !end || !D.map.route.length;
+  if (end) {
+    const m = D.map, tp = D.pads[D.target_pad];
+    const parts = [];
+    if (m.target) {
+      const e = Math.hypot(m.target.x - tp[0], m.target.y - tp[1]);
+      parts.push(`Target placed at ${m.target.x.toFixed(0)}, ${m.target.y.toFixed(0)} cm; really at ${tp[0]}, ${tp[1]} (off by ${e.toFixed(0)} cm).`);
+    } else parts.push("Target not found.");
+    parts.push(m.route.length ? `Dog route: ${m.route.length} waypoints, ${m.route_checked ? "every square flown over and free" : "NOT fully checked by the drone (dashed)"}.` : "No route for the dog.");
+    const nb = (m.unchecked_beside_route || []).length;
+    if (m.route.length) parts.push(nb ? `${nb} square${nb > 1 ? "s" : ""} beside the route (inside the dog's clearance) never checked (amber).` : "Every square beside the route was checked too.");
+    parts.push(m.drift_at_home_cm ? `Drift measured over pad A: ${m.drift_at_home_cm[0]}, ${m.drift_at_home_cm[1]} cm.` : "Pad A not found on return; drift unknown.");
+    if (D.error) parts.push(`Mission stopped: ${D.error}.`);
+    const ok = m.target && m.route_checked && !nb;
+    $("result").innerHTML = `<div class="status">${ok ? "Ready for the dog" : "Needs attention"}</div>` + parts.map(p => `<div>${p}</div>`).join("");
+    $("result").className = "result" + (ok ? "" : " bad");
+  }
+}
+
+function show(i) {
+  k = Math.max(0, Math.min(last, i));
+  $("scrub").value = k;
+  if (k !== last) { dogT = null; cancelAnimationFrame(dogAnim); }
+  draw(); panel();
+}
+function stop() { clearInterval(timer); timer = null; $("play").textContent = k === last ? "Replay" : "Play"; }
+function play() {
+  if (k === last) show(0);
+  $("play").textContent = "Pause";
+  timer = setInterval(() => {
+    if (k >= last) { stop(); walkDog(); return; }
+    show(k + 1);
+  }, +$("speed").value);
+}
+function walkDog() {
+  if (!D.map.route.length) return;
+  cancelAnimationFrame(dogAnim);
+  const t0 = performance.now(), dur = 5000;
+  const tick = (now) => { dogT = Math.min(1, (now - t0) / dur); draw();
+    if (dogT < 1) dogAnim = requestAnimationFrame(tick); };
+  dogAnim = requestAnimationFrame(tick);
+}
+
+$("play").onclick = () => timer ? stop() : play();
+$("prev").onclick = () => { stop(); show(k - 1); };
+$("next").onclick = () => { stop(); show(k + 1); };
+$("scrub").oninput = (e) => { stop(); show(+e.target.value); };
+$("speed").onchange = () => { if (timer) { stop(); play(); } };
+$("dog").onclick = walkDog;
+for (const id of ["showTruth", "showTrue", "showCorrected"]) $(id).onchange = draw;
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" && e.target.type === "range") return;
+  if (e.key === " ") { e.preventDefault(); timer ? stop() : play(); }
+  if (e.key === "ArrowRight") { stop(); show(k + 1); }
+  if (e.key === "ArrowLeft") { stop(); show(k - 1); }
+});
+new ResizeObserver(() => { layout(); draw(); }).observe(canvas.parentElement);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+layout(); show(0);
+</script>
+</body>
+</html>
