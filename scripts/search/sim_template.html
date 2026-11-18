@@ -104,6 +104,8 @@ kbd { font: 12px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
           <dt>Really at</dt><dd id="real"></dd>
           <dt>Tracking error</dt><dd id="err"></dd>
           <dt>Target estimate</dt><dd id="tgt"></dd>
+          <dt>Flight time</dt><dd id="time"></dd>
+          <dt>Battery</dt><dd id="batt"></dd>
         </dl>
       </div>
       <div id="resultBox" hidden>
@@ -141,7 +143,9 @@ const F = D.frames, last = F.length - 1, C = D.cell;
 let k = 0, timer = null, dogT = null, dogAnim = null;
 
 $("scenario").textContent = D.name;
-$("about").textContent = D.about;
+$("about").textContent = D.about + (D.ideal ? " Ideal sensors." :
+  " Realistic sensors: noisy readings, missed pads, heading creep, battery drain.") +
+  ` Boxes spotted with ${D.signal === "tof" ? "the distance sensor" : "the distance sensor and barometer"}.`;
 $("cellcm").textContent = C;
 $("scrub").max = last;
 
@@ -298,6 +302,8 @@ function panel() {
   $("real").textContent = fmt(f.true);
   $("err").textContent = `${Math.hypot(f.est[0] - f.true[0], f.est[1] - f.true[1]).toFixed(0)} cm`;
   $("tgt").textContent = fmt(f.target);
+  $("time").textContent = `${Math.floor(f.t / 60)}:${String(Math.round(f.t % 60)).padStart(2, "0")}`;
+  $("batt").textContent = `${f.battery}%`;
   const lines = [];
   F.slice(0, k + 1).forEach((fr, i) => fr.log.forEach(t => lines.push([i, t])));
   $("log").innerHTML = lines.map(([i, t]) =>

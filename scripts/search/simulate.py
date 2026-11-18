@@ -25,9 +25,18 @@ from sim_drone import FakeTello
 
 HERE = Path(__file__).resolve().parent
 
+# Real-world trouble every scenario gets unless --ideal: noisy and occasionally garbage
+# distance readings, pads missed now and then, a slowly creeping heading, a noisy
+# barometer, and a battery that lasts about 11 minutes of flight. These are guesses,
+# to be replaced with numbers measured on the real drone.
+REALISM = dict(tof_noise=2.0, tof_glitch=0.03, pad_miss=0.15, yaw_drift=0.5,
+               baro_noise=5.0, drain=100 / (11 * 60))
+START_BATTERY = 90
+
 # Each scenario: area (cm from pad A), pads {id: (x, y)}, boxes (x0, x1, y0, y1, height cm;
 # a negative height is a drop such as a step down), errors, and which pads the mission
-# knows about beforehand (`known`, besides pad A).
+# knows about beforehand (`known`, besides pad A). Optional: drone (extra FakeTello
+# options) and signal (the mission's obstacle_signal).
 SCENARIOS = {
     "room": dict(
         about="A room with two boxes and a step down; the drone drifts a little to the right. "
@@ -39,10 +48,18 @@ SCENARIOS = {
         move_error=(0.02, 0.0), bias=(0.0, -0.4), lanes=40),
     "box": dict(
         about="One long box between pad A and the target, with a gap on the left.",
-        area=dict(forward=220, back=0, left=80, right=80),
+        area=dict(forward=220, back=0, left=120, right=80),
         pads={1: (0, 0), 2: (180, 0)},
         boxes=[(70, 110, -90, 20, 30)],
         move_error=(0.0, 0.0), bias=(0.0, 0.0), lanes=20),
+    "climb": dict(
+        about="The drone climbs over boxes by itself, so its distance reading never changes. "
+              "Only the barometer shows the box. Try --signal tof to see the box missed.",
+        area=dict(forward=220, back=0, left=120, right=80),
+        pads={1: (0, 0), 2: (180, 0)},
+        boxes=[(70, 110, -90, 20, 30)],
+        move_error=(0.0, 0.0), bias=(0.0, 0.0), lanes=20,
+        drone=dict(auto_climb=True), signal="tof+baro"),
     "drift": dict(
         about="Open floor, but the drone slides 1 cm right on every move (a draught). "
               "It comes home off pad A, spirals to find it, and corrects the map.",
@@ -86,14 +103,14 @@ class RecordingMission(Mission):
     """The real mission, plus a snapshot after every observation."""
 
     PHASES = (("Taking off", "Take off"), ("Searching", "Search"),
-              ("target pad", "Target found"), ("route home", "Fly the dog's route home"),
+              ("target pad", "Target found"), ("Checking beside", "Check beside the route"),
+              ("route home", "Fly the dog's route home"),
               ("spiralling", "Look for pad A"), ("tracking was off", "Correct the map"),
               ("Landing", "Landed"))
 
     def __init__(self, drone, **kw):
         self.frames, self._said, self.phase = [], [], "Take off"
-        super().__init__(drone, say=self._say, settle=0, sleep=lambda s: None,
-                         send=lambda m: None, **kw)
+        super().__init__(drone, say=self._say, sleep=drone.sleep, send=lambda m: None, **kw)
 
     # Messages that announce what happens next; everything else said between steps is
     # about the step that just happened, so it goes on that step's frame.
@@ -137,17 +154,24 @@ class RecordingMission(Mission):
             "grid": self.map.rows(),
             "target": target,
             "log": self._said,
+            "t": round(self.d.t, 1),
+            "battery": self.d.get_battery(),
         })
         self._said = []
 
 
-def run(name: str, sc: dict, dog_width: float, margin: float) -> dict:
+def run(name: str, sc: dict, dog_width: float, margin: float, ideal: bool = False,
+        signal: str = None, seed: int = 0) -> dict:
     a = sc["area"]
+    trouble = {} if ideal else dict(REALISM)
+    trouble.update(sc.get("drone", {}))
     drone = FakeTello({k: tuple(v) for k, v in sc["pads"].items()}, boxes=sc["boxes"],
-                      move_error=sc["move_error"], bias=sc["bias"])
+                      move_error=sc["move_error"], bias=sc["bias"], battery=START_BATTERY,
+                      seed=seed, **trouble)
+    signal = signal or sc.get("signal", "tof")
     m = RecordingMission(drone, target=2, x_range=(-a["back"], a["forward"]),
                          y_range=(-a["right"], a["left"]), dog_width=dog_width, margin=margin,
-                         lane_cm=sc["lanes"], pads=sc.get("known", {}))
+                         lane_cm=sc["lanes"], pads=sc.get("known", {}), obstacle_signal=signal)
     error = None
     try:
         msg = m.run()
@@ -162,7 +186,8 @@ def run(name: str, sc: dict, dog_width: float, margin: float) -> dict:
         "origin_pad": 1, "target_pad": 2,
         "known_pads": [str(k) for k in sc.get("known", {})],
         "boxes": [list(b) for b in sc["boxes"]],
-        "errors": {"move_error": sc["move_error"], "bias": sc["bias"]},
+        "errors": {"move_error": sc["move_error"], "bias": sc["bias"], **trouble},
+        "signal": signal, "ideal": ideal,
         "dog_width": dog_width, "clearance": m.radius,
         "frames": m.frames,
         "corrected": [[round(x, 1), round(y, 1)] for x, y in m.tracker.points],
@@ -175,6 +200,10 @@ def main(argv=None) -> int:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--scenario", default="room", choices=[*SCENARIOS, "random"])
     p.add_argument("--seed", type=int, default=1, help="for --scenario random")
+    p.add_argument("--ideal", action="store_true",
+                   help="perfect sensors and battery (only the scenario's own errors)")
+    p.add_argument("--signal", choices=["tof", "tof+baro"],
+                   help="how the drone spots boxes (default: the scenario's choice, else tof)")
     p.add_argument("--dog-width", type=float, default=30)
     p.add_argument("--margin", type=float, default=10)
     p.add_argument("--out", default="sim.html")
@@ -190,7 +219,8 @@ def main(argv=None) -> int:
 
     sc = random_scenario(args.seed) if args.scenario == "random" else SCENARIOS[args.scenario]
     name = f"random (seed {args.seed})" if args.scenario == "random" else args.scenario
-    data = run(name, sc, args.dog_width, args.margin)
+    data = run(name, sc, args.dog_width, args.margin, ideal=args.ideal, signal=args.signal,
+               seed=args.seed)
 
     page = (HERE / "sim_template.html").read_text()
     page = page.replace("/*SIM_DATA*/null", json.dumps(data, separators=(",", ":")))
@@ -208,6 +238,9 @@ def main(argv=None) -> int:
         print("  target not found")
     print(f"  dog route: {len(msg['route'])} waypoints, checked by drone: {msg['route_checked']}")
     print(f"  drift at home: {msg['drift_at_home_cm']}")
+    last = data["frames"][-1]
+    print(f"  flight time {last['t'] / 60:.1f} min, battery {START_BATTERY}% -> {last['battery']}%"
+          + ("" if not args.ideal else " (ideal: no drain)"))
     if data["error"]:
         print(f"  mission stopped: {data['error']}")
     print(f"Wrote {out.resolve()}")

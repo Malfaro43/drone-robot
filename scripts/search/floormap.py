@@ -3,14 +3,18 @@
 A reading from the drone's downward distance sensor says what's under one spot:
   - about the flight-height baseline -> open floor (free);
   - much shorter -> something under the drone (box, chair, table) -> blocked;
-  - much longer, or no valid reading -> a drop (step, stairs) -> blocked.
-Blocked wins: one blocked reading in a cell keeps it blocked.
+  - much longer -> a drop (step, stairs) -> blocked;
+  - no valid reading -> nothing is marked (the square stays unknown).
+Blocked wins: one blocked reading in a cell keeps it blocked, so callers should pass a
+filtered reading (find_pad takes the median of a few).
 
 Routes avoid every square within the dog's half-width plus a safety gap of a blocked
 square. While flying, dog routes may cross unknown squares (at a cost) because the drone
 checks each square as it flies them. To get back onto a route, the drone alone may also
 cross safety gaps (cross_clearance). The route sent to the dog uses free squares outside
-every safety gap only.
+every safety gap only, and "strict" routes also keep the dog's clearance away from unknown
+squares and from the edge of the search area: everything the dog's body passes over has
+been read by the drone.
 """
 
 import heapq
@@ -22,9 +26,10 @@ UNKNOWN_COST = 3.0
 CLEARANCE_COST = 50.0  # in-flight only: crossing a square too close to an obstacle for the dog
 
 
-def classify(tof: float, baseline: float, obstacle_cm: float, drop_cm: float) -> str:
+def classify(tof: float, baseline: float, obstacle_cm: float, drop_cm: float):
+    """FREE, BLOCKED, or None when there is no valid reading."""
     if tof is None or tof <= 0 or tof >= TOF_INVALID:
-        return BLOCKED
+        return None
     if tof < baseline - obstacle_cm or tof > baseline + drop_cm:
         return BLOCKED
     return FREE
@@ -55,13 +60,18 @@ class FloorMap:
     def get(self, c) -> str:
         return self.cells.get(c, UNKNOWN)
 
-    def no_go(self, radius_cm: float) -> set:
-        """Cells too close to a blocked cell for the dog."""
+    def no_go(self, radius_cm: float, strict: bool = False, edges: bool = False) -> set:
+        """Cells too close to a blocked cell for the dog. With edges, also too close to the
+        outside of the search area (which the drone can never check). With strict, also
+        too close to an unknown cell."""
         r = int(math.ceil(radius_cm / self.cell))
+        sources = [c for c, s in self.cells.items() if s == BLOCKED]
+        if strict or edges:
+            (i0, i1), (j0, j1) = self.i_range, self.j_range
+            sources += [(i, j) for i in range(i0 - r, i1 + r + 1) for j in range(j0 - r, j1 + r + 1)
+                        if not self.inside((i, j)) or (strict and self.get((i, j)) == UNKNOWN)]
         out = set()
-        for (bi, bj), s in self.cells.items():
-            if s != BLOCKED:
-                continue
+        for bi, bj in sources:
             for di in range(-r, r + 1):
                 for dj in range(-r, r + 1):
                     if math.hypot(di, dj) * self.cell <= radius_cm:
@@ -69,11 +79,21 @@ class FloorMap:
         return out
 
     def route(self, start, goal, radius_cm: float, allow_unknown: bool = True,
-              cross_clearance: bool = False):
+              cross_clearance: bool = False, strict: bool = False, edges: bool = False):
         """Shortest 4-connected route of cells from start to goal, or None.
         Start and goal are always allowed (the drone may be over a blocked cell).
-        cross_clearance lets the drone (never the dog) pass through safety gaps."""
-        blocked = self.no_go(radius_cm)
+        cross_clearance lets the drone (never the dog) pass through safety gaps.
+        strict is for the dog: free cells whose whole clearance has been read.
+        edges keeps the clearance inside the search area (for planning dog routes)."""
+        if strict:
+            allow_unknown = cross_clearance = False
+        blocked = self.no_go(radius_cm, strict=strict, edges=edges)
+        if strict or edges:
+            # Around the start (where the dog already stands, beside pad A at the edge of
+            # the area) and the goal, only real obstacles count, not unread squares.
+            near_ends = {c for c in blocked
+                         if min(math.dist(c, start), math.dist(c, goal)) * self.cell <= radius_cm}
+            blocked -= near_ends - self.no_go(radius_cm)
 
         def ok(c):
             if c in (start, goal):

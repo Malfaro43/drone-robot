@@ -32,13 +32,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # scripts/ for 
 
 from flight_common import countdown, land_now, preflight  # noqa: E402
 
-from floormap import BLOCKED, FREE, FloorMap, classify, waypoints  # noqa: E402
+from floormap import BLOCKED, FREE, UNKNOWN, FloorMap, classify, waypoints  # noqa: E402
 from sweep import _walk, lawnmower, snap, spiral  # noqa: E402
-from tracker import Tracker, yaw_correction  # noqa: E402
+from tracker import Tracker, heading_error, yaw_correction  # noqa: E402
 
 CELL = 20             # cm per grid square = SDK minimum move
 MAX_SPAN_CM = 600     # refuse search areas bigger than this on either axis
-HOME_SEARCH_RINGS = 2  # if pad A isn't seen on return, spiral up to 2 squares (40 cm) out
+HOME_SEARCH_RINGS = 3  # if pad A isn't seen on return, spiral up to 3 squares (60 cm) out
+CRITICAL_BATTERY = 10  # % below which the mission lands wherever it is
+SIDE_CHECK_RESERVE = 15  # % battery above the minimum needed to start a round of side checks
 GO_Y_SIGN = 1         # +1 if `go 0 20 0` moves the drone LEFT. UNVERIFIED: check in test (b).
 
 
@@ -58,6 +60,7 @@ class Mission:
     def __init__(self, drone, *, target, x_range, y_range, dog_width, origin=1, pads=None,
                  lane_cm=40, speed=30, climb=0, margin=10, obstacle_cm=15, drop_cm=25,
                  settle=0.5, min_battery=20, yaw_limit=10, max_replans=10,
+                 obstacle_signal="tof", tof_samples=3, pad_tries=2, side_rounds=3,
                  send=default_send, say=print, sleep=time.sleep):
         self.d = drone
         self.target, self.origin = target, origin
@@ -68,12 +71,20 @@ class Mission:
         known = {origin: (0, 0), **(pads or {})}
         if target in known:
             raise ValueError("the target pad can't also be a known reference pad")
-        self.radius = dog_width / 2 + margin
+        # Each square is judged by one reading at its centre, so an obstacle edge can be up
+        # to half a square closer than the map shows: add that to the clearance.
+        self.radius = dog_width / 2 + margin + CELL / 2
         self.lane_cells = max(1, round(lane_cm / CELL))
         self.speed, self.climb, self.settle = speed, climb, settle
         self.obstacle_cm, self.drop_cm = obstacle_cm, drop_cm
         self.min_battery, self.yaw_limit, self.max_replans = min_battery, yaw_limit, max_replans
         self.send, self.say, self.sleep = send, say, sleep
+        if obstacle_signal not in ("tof", "tof+baro"):
+            raise ValueError("obstacle_signal must be 'tof' or 'tof+baro'")
+        self.obstacle_signal, self.tof_samples = obstacle_signal, tof_samples
+        self.pad_tries, self.side_rounds = pad_tries, side_rounds
+        self.baro0 = None
+        self.low_battery = False  # below min_battery: stop searching/checking, go home
 
         self.tracker = Tracker(known)
         self.map = FloorMap(self.i_range, self.j_range, CELL)
@@ -87,11 +98,35 @@ class Mission:
         self.flying = False
 
     # ---- sensing -------------------------------------------------------------------
-    def pad(self):
-        mid = self.d.get_mission_pad_id()
-        if mid is None or mid <= 0:
-            return None
-        return mid, self.d.get_mission_pad_distance_x(), self.d.get_mission_pad_distance_y()
+    def pad(self, tries=None):
+        """(id, raw x, raw y) of the pad under the drone, or None. Pad detection misses
+        now and then, so it looks a few times before giving up."""
+        for n in range(tries or self.pad_tries):
+            if n:
+                self.sleep(0.1)
+            mid = self.d.get_mission_pad_id()
+            if mid is not None and mid > 0:
+                return mid, self.d.get_mission_pad_distance_x(), self.d.get_mission_pad_distance_y()
+        return None
+
+    def read_floor(self):
+        """Median of a few downward readings (one bad reading can't block a square for good).
+        Returns (state or None, tof, baro)."""
+        vals = []
+        for n in range(self.tof_samples):
+            if n:
+                self.sleep(0.1)
+            vals.append(self.d.get_distance_tof())
+        good = [v for v in vals if v is not None and 0 < v < 600]
+        tof = statistics.median(good) if good else None
+        state = classify(tof, self.baseline, self.obstacle_cm, self.drop_cm)
+        baro = statistics.median(self.d.get_barometer() for _ in range(3))
+        if state == FREE and self.obstacle_signal == "tof+baro" and self.baro0 is not None:
+            # the drone may climb over a box by itself, keeping the distance reading
+            # unchanged; the barometer still sees the climb
+            if baro - self.baro0 > self.obstacle_cm or baro - self.baro0 < -self.drop_cm:
+                state = BLOCKED
+        return state, tof, baro
 
     def rebuild_map(self):
         self.map = FloorMap(self.i_range, self.j_range, CELL)
@@ -112,17 +147,20 @@ class Mission:
                 self.found = (idx, px, py)
                 tx, ty = self.tracker.place(idx, px, py)
                 self.say(f"  target pad {mid} seen, about x={tx:.0f} y={ty:.0f} cm")
-        tof = self.d.get_distance_tof()
-        state = classify(tof, self.baseline, self.obstacle_cm, self.drop_cm)
-        self.readings.append((idx, state))
-        self.map.mark(self.map.cell_of(*self.tracker.pos), state)
+        state, tof, baro = self.read_floor()
+        if state is not None:
+            self.readings.append((idx, state))
+            self.map.mark(self.map.cell_of(*self.tracker.pos), state)
         self.raw.append({"i": idx, "pos": [round(v, 1) for v in self.tracker.pos],
-                         "tof": tof, "h": self.d.get_height(), "baro": self.d.get_barometer(),
+                         "tof": tof, "h": self.d.get_height(), "baro": baro,
                          "pad": pad, "state": state})
 
         battery = self.d.get_battery()
-        if battery < self.min_battery:
-            raise MissionError(f"battery {battery}% below {self.min_battery}%")
+        if battery < CRITICAL_BATTERY:
+            raise MissionError(f"battery {battery}%: landing here")
+        if battery < self.min_battery and not self.low_battery:
+            self.low_battery = True
+            self.say(f"  battery {battery}%: stopping and heading home")
         turn = yaw_correction(self.yaw0, self.d.get_yaw(), self.yaw_limit)
         if turn:
             way, deg = turn
@@ -136,9 +174,12 @@ class Mission:
         if not self.map.inside(nxt):
             raise MissionError(f"step to cell {nxt} would leave the search area")
         dx, dy = d[0] * CELL, d[1] * CELL
+        yaw_err = heading_error(self.yaw0, self.d.get_yaw())
         self.d.go_xyz_speed(dx, GO_Y_SIGN * dy, 0, self.speed)
-        self.tracker.moved(dx, dy)
-        self.cell = nxt
+        self.tracker.moved(dx, dy, yaw_err)
+        # Our square is wherever the estimate says, which can differ from the commanded
+        # square once heading corrections add up (readings are filed under the estimate).
+        self.cell = self.map.cell_of(*self.tracker.pos)
         return self.observe()
 
     def walk_cells(self, path) -> str:
@@ -172,11 +213,11 @@ class Mission:
         Each re-plan is a whole dog route from the target. The drone rejoins it at the last
         square of the route's already-confirmed start and flies the rest, so by the end
         every square of the final route has been flown over."""
-        start = self.cell
+        start = self.target_cell() or self.cell
         for _ in range(self.max_replans + 1):
             if self.cell == self.home:
                 return
-            plan = self.map.route(start, self.home, self.radius, allow_unknown=True)
+            plan = self.map.route(start, self.home, self.radius, allow_unknown=True, edges=True)
             if plan is None:
                 self.say("  no safe route for the dog; flying straight home")
                 break
@@ -199,12 +240,59 @@ class Mission:
         for d in _walk(self.cell, self.home):
             self.step(d)
 
+    def fly_to(self, goal) -> bool:
+        """Drone-only flight to a cell (may cross safety gaps; doesn't stop on blocked)."""
+        for _ in range(self.max_replans + 1):
+            if self.cell == goal:
+                return True
+            path = self.map.route(self.cell, goal, self.radius, allow_unknown=True,
+                                  cross_clearance=True)
+            if path is None:
+                for d in _walk(self.cell, goal):
+                    self.step(d)
+                continue
+            for c in path[1:]:
+                self.step((c[0] - self.cell[0], c[1] - self.cell[1]))
+                if self.cell != c:
+                    break  # a pad fix shifted us: re-plan
+        return self.cell == goal
+
+    def target_cell(self):
+        return self.map.cell_of(*self.tracker.place(*self.found)) if self.found else None
+
+    def dog_route(self):
+        """The route the dog would get right now (every square it passes has been read)."""
+        goal = self.target_cell()
+        return None if goal is None else self.map.route(self.home, goal, self.radius, strict=True)
+
+    def check_sides(self) -> bool:
+        """One pass over the unread squares beside the best dog route (nearest first).
+        False if there's no point trying again (no route at all, or battery too low)."""
+        plan = self.map.route(self.home, self.target_cell(), self.radius, allow_unknown=True,
+                              edges=True)
+        if plan is None:
+            self.say("  no route for the dog to check")
+            return False
+        left = set(self.map.unchecked_beside(plan, self.radius))
+        self.say(f"  checking {len(left)} squares beside the dog's route")
+        while left:
+            # Keep enough battery to get back to pad A from here (~1% per 3 squares, doubled)
+            far = abs(self.cell[0]) + abs(self.cell[1])
+            if self.low_battery or self.d.get_battery() < self.min_battery + 3 + 2 * far // 3:
+                self.say(f"  battery low: stopping the side checks with {len(left)} left")
+                return False
+            c = min(left, key=lambda t: abs(t[0] - self.cell[0]) + abs(t[1] - self.cell[1]))
+            left.discard(c)
+            if self.map.get(c) == UNKNOWN:
+                self.fly_to(c)
+        return True
+
     def _fixed_on_origin_here(self) -> bool:
         last = self.tracker.fixes[-1] if self.tracker.fixes else None
         return bool(last and last[0] == self.tracker.index and last[1] == self.origin)
 
     def arrive_home(self) -> None:
-        pad = self.pad()
+        pad = self.pad(tries=5)
         if not self._fixed_on_origin_here() and not (pad and pad[0] == self.origin):
             self.say("  pad A not under the drone; spiralling out to find it")
             for s in spiral(HOME_SEARCH_RINGS):
@@ -221,7 +309,8 @@ class Mission:
         else:
             ex = ey = None
         if ex is not None:
-            self.drift = [round(ex, 1), round(ey, 1)]
+            if self.drift is None:  # report the first measurement, after the main flight
+                self.drift = [round(ex, 1), round(ey, 1)]
             self.rebuild_map()
             self.say(f"  over pad A: tracking was off by x={ex:.0f} y={ey:.0f} cm; log corrected")
             try:
@@ -247,12 +336,16 @@ class Mission:
             if self.climb:
                 d.move_up(self.climb)
             self.yaw0 = d.get_yaw()
-            pad = self.pad()
+            pad = self.pad(tries=5)
             if not pad or pad[0] != self.origin:
                 raise MissionError(f"pad {self.origin} not under the drone after takeoff (saw {pad})")
             self.tracker.pad_fix(*pad)
             self.cell = self.map.cell_of(*self.tracker.pos)
-            self.baseline = statistics.median(d.get_distance_tof() for _ in range(3))
+            good = [v for v in (d.get_distance_tof() for _ in range(5)) if 0 < v < 600]
+            if not good:
+                raise MissionError("no valid floor distance reading after takeoff")
+            self.baseline = statistics.median(good)
+            self.baro0 = statistics.median(d.get_barometer() for _ in range(5))
             self.say(f"  floor baseline {self.baseline:.0f} cm")
             self.observe()
 
@@ -261,8 +354,22 @@ class Mission:
                 if not self.map.inside((self.cell[0] + s[0], self.cell[1] + s[1])):
                     continue  # a pad fix shifted us; skip steps that would leave the area
                 self.step(s)
-                if self.found:
+                if self.found or self.low_battery:
                     break
+            if not self.found and self.lane_cells > 1:
+                # Pads are only seen within ~25 cm, so with drift the drone can slip past
+                # one between lanes. Second pass down the gaps between the first lanes.
+                battery = d.get_battery()
+                if battery >= self.min_battery + SIDE_CHECK_RESERVE:
+                    self.say("  target not found; searching between the lanes")
+                    j0, j1 = self.j_range
+                    gaps = (min(j0 + self.lane_cells // 2, j1), j1)
+                    for s in lawnmower(self.cell, self.i_range, gaps, self.lane_cells):
+                        if not self.map.inside((self.cell[0] + s[0], self.cell[1] + s[1])):
+                            continue
+                        self.step(s)
+                        if self.found or self.low_battery:
+                            break
             if self.found:
                 self.centre_over_target()
             else:
@@ -270,7 +377,24 @@ class Mission:
 
             self.say("Flying the dog's route home ...")
             self.fly_home()
-            self.arrive_home()
+            self.arrive_home()  # corrects the drift so far, target position included
+            # Until the dog's route is fully read: from pad A, check the unread squares beside
+            # the best route, then come back so pad A corrects the drift of that part too.
+            for _ in range(self.side_rounds if self.found else 0):
+                if self.dog_route() is not None:
+                    break
+                battery = d.get_battery()
+                if battery < self.min_battery + SIDE_CHECK_RESERVE:
+                    self.say(f"  battery {battery}%: not enough to check beside the route")
+                    break
+                self.say("Checking beside the dog's route ...")
+                go_on = self.check_sides()
+                if self.cell != self.home:
+                    self.say("Flying home ...")
+                    self.fly_to(self.home)
+                    self.arrive_home()
+                if not go_on:
+                    break
             self.say("Landing.")
             d.land()
             self.flying = False
@@ -291,7 +415,7 @@ class Mission:
             target_cell = self.map.cell_of(tx, ty)
         route, checked, beside = [], False, []
         if target_cell is not None:
-            path = self.map.route(self.home, target_cell, self.radius, allow_unknown=False)
+            path = self.map.route(self.home, target_cell, self.radius, strict=True)
             checked = path is not None
             if path is None:
                 path = self.map.route(self.home, target_cell, self.radius, allow_unknown=True)
@@ -362,6 +486,8 @@ def main(argv=None) -> int:
                    help="floor reading this much SHORTER than baseline = something there")
     p.add_argument("--drop-cm", type=float, default=25,
                    help="floor reading this much LONGER than baseline = a drop")
+    p.add_argument("--obstacle-signal", choices=["tof", "tof+baro"], default="tof",
+                   help="also use the barometer, in case the drone climbs over boxes by itself")
     p.add_argument("--out", default="map.json", help="where to save the map and flight log")
     p.add_argument("--countdown", type=int, default=5)
     p.add_argument("--ignore-temp", action="store_true")
@@ -396,7 +522,8 @@ def main(argv=None) -> int:
                           x_range=(-args.back, args.forward), y_range=(-args.right, args.left),
                           dog_width=args.dog_width,
                           margin=args.margin, lane_cm=args.lanes, speed=args.speed,
-                          climb=args.climb, obstacle_cm=args.obstacle_cm, drop_cm=args.drop_cm)
+                          climb=args.climb, obstacle_cm=args.obstacle_cm, drop_cm=args.drop_cm,
+                          obstacle_signal=args.obstacle_signal)
         problem = preflight(tello, ignore_temp=args.ignore_temp)
         if problem:
             print(problem)

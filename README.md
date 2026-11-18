@@ -54,7 +54,7 @@ Open `http://127.0.0.1:8080/` in a browser.
 
 ## Find a pad and map the dog's route (`scripts/search/`)
 
-The drone takes off from mission pad A beside the dog and sweeps the floor in lanes until it sees the target mission pad. On the way it marks every 20 cm square as free or blocked using its downward distance sensor. It then works out the dog's route home, keeping half the dog's width plus `--margin` away from anything blocked, and flies that route to check each square, re-planning if one turns out blocked. Back over pad A it measures how far its tracking drifted and corrects the whole map, then lands. The map and route for the dog are printed and saved to `--out` (`map.json`). Sending them to the dog comes later, through the link module.
+The drone takes off from mission pad A beside the dog and sweeps the floor in lanes until it sees the target mission pad (with a second pass between the lanes if it missed it). On the way it marks every 20 cm square as free or blocked using its downward distance sensor (median of 3 readings; `--obstacle-signal tof+baro` also uses the barometer, in case the drone climbs over boxes by itself). It then flies the dog's route home, keeping half the dog's width + `--margin` + half a square away from anything blocked, re-planning if a square turns out blocked. Over pad A it measures how far its tracking drifted and corrects the whole map. Then, while the battery allows, it goes back out to read the unread squares beside the route, so the dog's whole body width is on floor the drone has read, and corrects again over pad A before landing. Below 20% battery it stops and comes home; below 10% it lands where it is. Only use a route the map marks `route_checked: true`. The map and route for the dog are printed and saved to `--out` (`map.json`). Sending them to the dog comes later, through the link module.
 
 Lay-out:
 - Pad A goes beside the dog, with its rocket pointing the way the dog faces. That is the map's +x; +y is left.
@@ -71,10 +71,13 @@ Lay-out:
 To watch a run without the drone, `scripts/search/simulate.py` flies the same mission code against a simulated drone in a made-up room and opens a replay page (`sim.html`). It shows where the drone really is versus where it thinks it is, the squares it marks, the dog's route, and the squares beside the route it never checked.
 
 ```bash
-.venv/bin/python scripts/search/simulate.py --list                 # room, box, drift, overshoot
+.venv/bin/python scripts/search/simulate.py --list                 # room, box, climb, drift, overshoot
 .venv/bin/python scripts/search/simulate.py --scenario drift
 .venv/bin/python scripts/search/simulate.py --scenario random --seed 7
+.venv/bin/python scripts/search/simulate.py --scenario climb --signal tof   # box missed without the barometer
 ```
+
+The simulated drone gets noisy and occasionally garbage distance readings, missed pad detections, a creeping heading and an 11-minute battery unless you pass `--ideal`. Those numbers are guesses (`REALISM` in `simulate.py`); replace them with measurements from the real drone.
 
 Not yet confirmed on the drone (check these before trusting a full run):
 - Which way the pad x/y offsets and `go` y-axis point (`PAD_X_SIGN`/`PAD_Y_SIGN` in `tracker.py`, `GO_Y_SIGN` in `find_pad.py`). Use `--check` and slide the drone over a pad by hand.

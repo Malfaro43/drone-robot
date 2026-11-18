@@ -13,6 +13,8 @@ Sign conventions are UNVERIFIED on hardware. Confirm them with `find_pad.py --ch
 (slide the drone over a pad by hand) and flip these constants if needed.
 """
 
+import math
+
 # Drone offset from a pad, as reported in the state packet ('x', 'y'), multiplied by
 # these to get map-frame cm. Assumes every pad is laid with its rocket pointing +x.
 PAD_X_SIGN = 1
@@ -45,8 +47,13 @@ class Tracker:
     def pos(self) -> tuple:
         return self.points[-1]
 
-    def moved(self, dx: float, dy: float) -> int:
-        """Record a commanded move. Returns the new point's index."""
+    def moved(self, dx: float, dy: float, yaw_err: float = 0.0) -> int:
+        """Record a commanded move. yaw_err is how far the drone has turned clockwise since
+        takeoff (degrees, from heading_error()): `go` moves are in the drone's own frame,
+        so a turned drone moves at that angle. Returns the new point's index."""
+        if yaw_err:
+            a = math.radians(yaw_err)
+            dx, dy = dx * math.cos(a) + dy * math.sin(a), -dx * math.sin(a) + dy * math.cos(a)
         x, y = self.points[-1]
         self.points.append((x + dx, y + dy))
         self.sources.append("move")
@@ -89,6 +96,12 @@ class Tracker:
         ox, oy = self.pad_offset(raw_x, raw_y)
         x, y = self.points[index]
         return x - ox, y - oy
+
+
+def heading_error(yaw0: float, yaw: float) -> float:
+    """Degrees the drone has turned clockwise since takeoff."""
+    err = wrap_degrees(yaw - yaw0)
+    return err if YAW_CW_POSITIVE else -err
 
 
 def yaw_correction(yaw0: float, yaw: float, limit: float = 10.0):

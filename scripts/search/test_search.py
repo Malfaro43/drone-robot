@@ -102,7 +102,7 @@ class FloorMapTests(unittest.TestCase):
         self.assertEqual(classify(80, 80, 15, 25), FREE)
         self.assertEqual(classify(50, 80, 15, 25), BLOCKED)   # box
         self.assertEqual(classify(120, 80, 15, 25), BLOCKED)  # drop
-        self.assertEqual(classify(6553, 80, 15, 25), BLOCKED)  # no reading
+        self.assertIsNone(classify(6553, 80, 15, 25))           # no reading: leave unknown
 
     def test_blocked_sticks(self):
         m = FloorMap((0, 3), (0, 3))
@@ -168,18 +168,27 @@ class MissionTests(unittest.TestCase):
         # box across the middle, gap on the left (+y) side
         box = (70, 110, -70, 20, 30)
         drone = FakeTello({1: (0, 0), 2: (180, 0)}, boxes=[box])
-        msg = make(drone, lane_cm=20).run()
+        msg = make(drone, lane_cm=20, y_range=(-60, 120)).run()  # 100 cm gap on the left
         self.assertTrue(msg["route_checked"])
+        self.assertEqual(msg["unchecked_beside_route"], [])
         rows = msg["grid"]["rows"]
         self.assertIn(BLOCKED, "".join(rows))
-        # every route segment stays clear of the box by the dog's clearance
+        # the dog's body (10 cm each side of the route) never touches the box
         pts = msg["route"]
         for (ax, ay), (bx, by) in zip(pts, pts[1:]):
             n = int(max(abs(bx - ax), abs(by - ay)) / CELL)
             for k in range(n + 1):
                 x, y = ax + (bx - ax) * k / max(n, 1), ay + (by - ay) * k / max(n, 1)
-                inside = 70 <= x <= 110 and -70 <= y <= 20
-                self.assertFalse(inside, f"route passes over the box at {x},{y}")
+                gap = math.hypot(max(70 - x, 0, x - 110), max(-70 - y, 0, y - 20))
+                self.assertGreater(gap, 10, f"dog would touch the box at {x},{y}")
+
+    def test_gap_too_tight_is_not_called_safe(self):
+        # 40 cm gap between the box and the area edge = dog (20) + margin (10) each side:
+        # no room to spare, so the route must not be reported as checked
+        box = (70, 110, -70, 20, 30)
+        drone = FakeTello({1: (0, 0), 2: (180, 0)}, boxes=[box])
+        msg = make(drone, lane_cm=20).run()
+        self.assertFalse(msg["route_checked"])
 
     def test_steady_drift_measured_and_corrected(self):
         # the drone slides 1 cm right on every move (e.g. a draught)
@@ -206,14 +215,46 @@ class MissionTests(unittest.TestCase):
         self.assertTrue(with_pad.landed)
         self.assertLess(math.hypot(with_pad.x, with_pad.y), 1)
 
+    def test_heading_drift_is_corrected(self):
+        drone = FakeTello({1: (0, 0), 2: (160, -40)}, yaw_drift=3.0)
+        msg = make(drone).run()
+        self.assertLessEqual(abs(drone.yaw), 12)            # never wanders past the limit
+        self.assertLess(math.hypot(msg["target"]["x"] - 160, msg["target"]["y"] + 40), 15)
+        self.assertTrue(drone.landed)
+
+    def test_noisy_sensors_and_missed_pads(self):
+        drone = FakeTello({1: (0, 0), 2: (160, -40)}, tof_noise=3, tof_glitch=0.05,
+                          pad_miss=0.2, seed=3)
+        msg = make(drone).run()
+        self.assertIsNotNone(msg["target"])
+        self.assertNotIn(BLOCKED, "".join(msg["grid"]["rows"]))  # open floor: no false boxes
+        self.assertTrue(drone.landed)
+
+    def test_auto_climb_hides_box_from_distance_sensor(self):
+        box = (70, 110, -70, 20, 30)
+        kw = dict(boxes=[box], auto_climb=True, baro_noise=3, seed=1)
+        tof_only = make(FakeTello({1: (0, 0), 2: (180, 0)}, **kw), lane_cm=20).run()
+        with_baro = make(FakeTello({1: (0, 0), 2: (180, 0)}, **kw), lane_cm=20,
+                         obstacle_signal="tof+baro").run()
+        self.assertNotIn(BLOCKED, "".join(tof_only["grid"]["rows"]))   # box missed
+        self.assertIn(BLOCKED, "".join(with_baro["grid"]["rows"]))     # box found
+
+    def test_low_battery_mid_search_flies_home(self):
+        # drops below 20% partway through the search: stop searching, land on pad A
+        drone = FakeTello({1: (0, 0), 2: (180, 40)}, battery=28, drain=0.1)
+        make(drone, lane_cm=20, sleep=drone.sleep).run()
+        self.assertTrue(drone.landed)
+        self.assertLess(math.hypot(drone.x, drone.y), 1)
+        self.assertGreaterEqual(drone.get_battery(), 10)
+
     def test_target_missing(self):
         drone = FakeTello({1: (0, 0)})
         msg = make(drone).run()
         self.assertIsNone(msg["target"])
         self.assertTrue(drone.landed)
 
-    def test_lands_on_low_battery(self):
-        drone = FakeTello({1: (0, 0), 2: (160, -40)}, battery=10)
+    def test_critical_battery_lands_on_the_spot(self):
+        drone = FakeTello({1: (0, 0), 2: (160, -40)}, battery=9)
         with self.assertRaises(MissionError):
             make(drone).run()
         self.assertTrue(drone.landed)
