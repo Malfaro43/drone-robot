@@ -27,6 +27,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE / "search"), str(HERE / "dog"), str(HERE), str(HERE.parent)]
 
+import calibration  # noqa: E402
+import follow_route  # noqa: E402
 from find_pad import Mission, MissionError  # noqa: E402
 from flight_common import countdown, preflight  # noqa: E402
 from follow_route import FollowError, RouteFollower  # noqa: E402
@@ -68,6 +70,16 @@ def run_sim(args) -> int:
 def run_real(args) -> int:
     from tello_xgo_bridge import TelloXgoBridge
 
+    missing = calibration.apply_to_flight(args.cal)
+    follow_route.MIN_TURN = calibration.value(args.cal, "dog", "min_turn")
+    unmeasured = calibration.unmeasured(args.cal)
+    if unmeasured:
+        print("WARNING: still guesses (run scripts/calibrate.py): " + ", ".join(unmeasured))
+    if missing:
+        answer = input("The drone's directions aren't calibrated, so the map may be mirrored. "
+                       "Type 'fly anyway' to continue: ")
+        if answer.strip().lower() != "fly anyway":
+            return 1
     bridge = TelloXgoBridge(pi_url=args.pi)
     stats = bridge.xgo.read()
     if not stats.get("ok"):
@@ -168,10 +180,12 @@ def main(argv=None) -> int:
     p.add_argument("--dog-width", type=float, default=30)
     p.add_argument("--margin", type=float, default=10)
     p.add_argument("--lanes", type=float, default=40)
-    p.add_argument("--obstacle-signal", choices=["tof", "tof+baro"], default="tof")
+    p.add_argument("--obstacle-signal", choices=["tof", "tof+baro"],
+                   help="default: tof+baro if calibration found the drone climbs over boxes")
     p.add_argument("--dog-start", default="0,30",
                    help="where the dog stands, x,y cm from pad A, facing +x (default 0,30)")
-    p.add_argument("--walk-speed-cm", type=float, help="measured dog speed (cm/s at walk 8)")
+    p.add_argument("--walk-speed-cm", type=float,
+                   help="dog speed, cm/s at walk 8 (default: calibration.json)")
     p.add_argument("--dog-max-seconds", type=float, default=180)
     p.add_argument("--out", default="map.json")
     p.add_argument("--countdown", type=int, default=5)
@@ -179,7 +193,14 @@ def main(argv=None) -> int:
     args = p.parse_args(argv)
 
     if args.sim:
+        args.obstacle_signal = args.obstacle_signal or "tof"
         return run_sim(args)
+    args.cal = calibration.load()
+    if args.walk_speed_cm is None:
+        args.walk_speed_cm = calibration.value(args.cal, "dog", "walk_cm_per_s")
+    if args.obstacle_signal is None:
+        args.obstacle_signal = ("tof+baro" if calibration.value(args.cal, "drone", "auto_climb")
+                                else "tof")
     missing = [n for n in ("pi", "target", "forward", "left", "right", "walk_speed_cm")
                if getattr(args, n) is None]
     if missing:

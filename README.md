@@ -86,6 +86,19 @@ Not yet confirmed on the drone (check these before trusting a full run):
 
 Pad A only catches drift that doesn't cancel out on the way home. If every move overshoots by the same fraction, the overshoot cancels on the return and only checkpoint pads (`--pad`) can catch it.
 
+## Calibration (`scripts/calibrate.py`)
+
+Measures what the flight and walking code would otherwise guess, and saves it to `calibration.json` (commit it, so everyone uses the same numbers). `find_pad.py`, `follow_route.py` and `run_mission.py` read it and warn about anything still unmeasured; the simulation and tests don't.
+
+```bash
+.venv/bin/python scripts/calibrate.py show                     # what's measured, what's a guess
+.venv/bin/python scripts/calibrate.py drone-axes               # NO flight: hold the drone ~50 cm over pad A, move it by hand
+.venv/bin/python scripts/calibrate.py drone-hover              # short flight over pad A (+ optional box test)
+.venv/bin/python scripts/calibrate.py dog --pi http://100.74.30.90:8080   # turns, then walks ~50 cm; you tape-measure it
+```
+
+Do `drone-axes` before any search flight: until then, the map may be mirrored.
+
 ## Whole mission (`scripts/run_mission.py`)
 
 Drone search and route check, then the dog walks the route, all through `tello_xgo_bridge`. It checks the dog answers before flying, stops if the route isn't fully checked, and asks you to lift the drone off pad A before the dog moves.

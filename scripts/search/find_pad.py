@@ -28,7 +28,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # scripts/ for flight_common
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # scripts/: flight_common, calibration
 
 from flight_common import countdown, land_now, preflight  # noqa: E402
 
@@ -511,8 +511,9 @@ def main(argv=None) -> int:
                    help="floor reading this much SHORTER than baseline = something there")
     p.add_argument("--drop-cm", type=float, default=25,
                    help="floor reading this much LONGER than baseline = a drop")
-    p.add_argument("--obstacle-signal", choices=["tof", "tof+baro"], default="tof",
-                   help="also use the barometer, in case the drone climbs over boxes by itself")
+    p.add_argument("--obstacle-signal", choices=["tof", "tof+baro"],
+                   help="also use the barometer, in case the drone climbs over boxes by itself "
+                        "(default: tof+baro if calibration found it does, else tof)")
     p.add_argument("--out", default="map.json", help="where to save the map and flight log")
     p.add_argument("--countdown", type=int, default=5)
     p.add_argument("--ignore-temp", action="store_true")
@@ -534,6 +535,16 @@ def main(argv=None) -> int:
             p.error("--climb must be 0 or 20-40 (pads are only seen up to ~120 cm)")
         if not 10 <= args.speed <= 100:
             p.error("--speed must be 10-100")
+
+    import calibration
+    cal = calibration.load()
+    missing = calibration.apply_to_flight(cal)
+    if missing:
+        print("WARNING: not yet calibrated (run scripts/calibrate.py drone-axes / drone-hover): "
+              + ", ".join(missing))
+    if args.obstacle_signal is None:
+        args.obstacle_signal = ("tof+baro" if calibration.value(cal, "drone", "auto_climb")
+                                else "tof")
 
     from djitellopy import Tello
     tello = Tello()

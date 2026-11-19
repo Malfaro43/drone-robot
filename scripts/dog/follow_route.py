@@ -230,7 +230,7 @@ def main(argv=None) -> int:
                    help="dog's starting spot x,y cm from pad A (default 0,30: beside it, "
                         "on its left), facing +x")
     p.add_argument("--walk-speed-cm", type=float,
-                   help=f"measured cm/s at walk value {WALK}; required for a real dog")
+                   help=f"cm/s at walk value {WALK} (default: calibration.json)")
     p.add_argument("--max-seconds", type=float, default=180)
     p.add_argument("--allow-unchecked", action="store_true")
     args = p.parse_args(argv)
@@ -250,9 +250,17 @@ def main(argv=None) -> int:
         follower = RouteFollower(dog, args.walk_speed_cm or dog.cm_per_s(WALK), start=(sx, sy),
                                  clock=dog.clock, sleep=dog.sleep, max_seconds=args.max_seconds)
     else:
+        here = __import__("pathlib").Path(__file__).resolve()
+        sys.path[:0] = [str(here.parents[1]), str(here.parents[2])]
+        import calibration
+        global MIN_TURN
+        cal = calibration.load()
+        MIN_TURN = calibration.value(cal, "dog", "min_turn")
+        if args.walk_speed_cm is None:
+            args.walk_speed_cm = calibration.value(cal, "dog", "walk_cm_per_s")
         if not args.pi or not args.walk_speed_cm:
-            p.error("a real dog needs --pi and --walk-speed-cm (measure it first)")
-        sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2]))
+            p.error("a real dog needs --pi and a walking speed: run scripts/calibrate.py dog "
+                    "or pass --walk-speed-cm")
         from tello_xgo_bridge.xgo_link import XgoLink
         dog = XgoLink(args.pi)
         follower = RouteFollower(dog, args.walk_speed_cm, start=(sx, sy),
