@@ -299,5 +299,24 @@ class MissionTests(unittest.TestCase):
                            "--right", "-60", "--dog-width", "30"])
 
 
+class StressTests(unittest.TestCase):
+    """150 random rooms with realistic sensors, scored against the real layout
+    (stress.py runs more and prints the details)."""
+
+    @classmethod
+    def setUpClass(cls):
+        import stress
+        cls.s = stress.summarise([stress.evaluate(k) for k in range(1, 151)])
+
+    def test_no_checked_route_touches_an_obstacle(self):
+        self.assertEqual([r["seed"] for r in self.s["unsafe"]], [])
+
+    def test_rarely_lands_away_from_pad_a(self):
+        self.assertLessEqual(self.s["landed_early"], 0.03 * self.s["rooms"])
+
+    def test_found_targets_are_accurate(self):
+        self.assertLess(self.s["target_err_median"], 8)
+
+
 if __name__ == "__main__":
     unittest.main()

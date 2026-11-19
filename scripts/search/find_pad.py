@@ -84,7 +84,9 @@ class Mission:
         self.obstacle_signal, self.tof_samples = obstacle_signal, tof_samples
         self.pad_tries, self.side_rounds = pad_tries, side_rounds
         self.baro0 = None
-        self.low_battery = False  # below min_battery: stop searching/checking, go home
+        self.low_battery = False  # time to stop searching/checking and go home
+        self.steps = 0            # moves so far, to learn battery use per move
+        self.battery0 = None
 
         self.tracker = Tracker(known)
         self.map = FloorMap(self.i_range, self.j_range, CELL)
@@ -158,9 +160,9 @@ class Mission:
         battery = self.d.get_battery()
         if battery < CRITICAL_BATTERY:
             raise MissionError(f"battery {battery}%: landing here")
-        if battery < self.min_battery and not self.low_battery:
+        if not self.low_battery and battery < self.home_threshold(battery):
             self.low_battery = True
-            self.say(f"  battery {battery}%: stopping and heading home")
+            self.say(f"  battery {battery}%: just enough left to get home; heading home")
         turn = yaw_correction(self.yaw0, self.d.get_yaw(), self.yaw_limit)
         if turn:
             way, deg = turn
@@ -168,15 +170,30 @@ class Mission:
             (self.d.rotate_clockwise if way == "cw" else self.d.rotate_counter_clockwise)(deg)
         return state
 
+    def home_threshold(self, battery: float) -> float:
+        """Battery % below which we must head home: what the trip home costs from here
+        (measured % per move so far, x1.5, plus a few moves to find pad A), on top of
+        the critical level, and never below min_battery."""
+        if self.battery0 is None or self.steps < 10:
+            per_move = 0.5                     # until we've measured it
+        else:
+            per_move = max(0.2, (self.battery0 - battery) / self.steps)
+        moves_home = abs(self.cell[0]) + abs(self.cell[1]) + 6
+        return max(self.min_battery, CRITICAL_BATTERY + 3 + 1.5 * per_move * moves_home)
+
     # ---- moving --------------------------------------------------------------------
     def step(self, d) -> str:
         nxt = (self.cell[0] + d[0], self.cell[1] + d[1])
-        if not self.map.inside(nxt):
+        (i0, i1), (j0, j1) = self.i_range, self.j_range
+        # One square of slack: a drift correction can put our estimate just outside the
+        # edge, and stepping along (or back in from) there is fine. Further is not.
+        if not (i0 - 1 <= nxt[0] <= i1 + 1 and j0 - 1 <= nxt[1] <= j1 + 1):
             raise MissionError(f"step to cell {nxt} would leave the search area")
         dx, dy = d[0] * CELL, d[1] * CELL
         yaw_err = heading_error(self.yaw0, self.d.get_yaw())
         self.d.go_xyz_speed(dx, GO_Y_SIGN * dy, 0, self.speed)
         self.tracker.moved(dx, dy, yaw_err)
+        self.steps += 1
         # Our square is wherever the estimate says, which can differ from the commanded
         # square once heading corrections add up (readings are filed under the estimate).
         self.cell = self.map.cell_of(*self.tracker.pos)
@@ -296,6 +313,9 @@ class Mission:
         if not self._fixed_on_origin_here() and not (pad and pad[0] == self.origin):
             self.say("  pad A not under the drone; spiralling out to find it")
             for s in spiral(HOME_SEARCH_RINGS):
+                if self.d.get_battery() <= CRITICAL_BATTERY + 2:
+                    self.say("  battery nearly flat: landing here, near pad A")
+                    break
                 if self.map.inside((self.cell[0] + s[0], self.cell[1] + s[1])):
                     self.step(s)
                     if self._fixed_on_origin_here():
@@ -336,6 +356,7 @@ class Mission:
             if self.climb:
                 d.move_up(self.climb)
             self.yaw0 = d.get_yaw()
+            self.battery0 = d.get_battery()
             pad = self.pad(tries=5)
             if not pad or pad[0] != self.origin:
                 raise MissionError(f"pad {self.origin} not under the drone after takeoff (saw {pad})")
@@ -360,11 +381,15 @@ class Mission:
                 # Pads are only seen within ~25 cm, so with drift the drone can slip past
                 # one between lanes. Second pass down the gaps between the first lanes.
                 battery = d.get_battery()
-                if battery >= self.min_battery + SIDE_CHECK_RESERVE:
+                j0, j1 = self.j_range
+                gaps = (min(j0 + self.lane_cells // 2, j1), j1)
+                second = lawnmower(self.cell, self.i_range, gaps, self.lane_cells)
+                per_move = max(0.2, (self.battery0 - battery) / max(1, self.steps))
+                if self.low_battery or battery < self.home_threshold(battery) + per_move * len(second):
+                    self.say(f"  target not found; battery {battery}% too low for a second pass")
+                else:
                     self.say("  target not found; searching between the lanes")
-                    j0, j1 = self.j_range
-                    gaps = (min(j0 + self.lane_cells // 2, j1), j1)
-                    for s in lawnmower(self.cell, self.i_range, gaps, self.lane_cells):
+                    for s in second:
                         if not self.map.inside((self.cell[0] + s[0], self.cell[1] + s[1])):
                             continue
                         self.step(s)
