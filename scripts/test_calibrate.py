@@ -49,17 +49,17 @@ class CalibrationFileTests(unittest.TestCase):
         self.assertIn("drone.pad_x_sign", calibration.unmeasured(again))
 
     def test_apply_to_flight_sets_conventions(self):
-        import find_pad
+        import mission
         import tracker
         cal, path = tmp_cal()
         calibration.record(cal, "drone", "pad_x_sign", -1, path)
         calibration.record(cal, "drone", "go_y_sign", -1, path)
         try:
             missing = calibration.apply_to_flight(cal)
-            self.assertEqual((tracker.PAD_X_SIGN, find_pad.GO_Y_SIGN), (-1, -1))
+            self.assertEqual((tracker.PAD_X_SIGN, mission.GO_Y_SIGN), (-1, -1))
             self.assertIn("pad_y_sign", missing)
         finally:
-            tracker.PAD_X_SIGN = find_pad.GO_Y_SIGN = 1
+            tracker.PAD_X_SIGN = mission.GO_Y_SIGN = 1
 
 
 def hand_mover(drone):

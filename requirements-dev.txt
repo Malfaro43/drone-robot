@@ -1,0 +1,3 @@
+# For running the tests (pytest runs every suite: `.venv/bin/python -m pytest`)
+-r requirements.txt
+pytest>=8

@@ -74,19 +74,10 @@ class Tracker:
         ex, ey = self.points[-1][0] - (px + ox), self.points[-1][1] - (py + oy)
         return self.correct(ex, ey, pad_id)
 
-    def error_at(self, est: tuple, pad_id: int, raw_x: float, raw_y: float):
-        """Tracking error (ex, ey) at an estimated position `est` where a known pad was
-        seen with this raw offset (e.g. mid-move), or None if the pad isn't known."""
-        if pad_id not in self.known_pads:
-            return None
-        px, py = self.known_pads[pad_id]
-        ox, oy = self.pad_offset(raw_x, raw_y)
-        return est[0] - (px + ox), est[1] - (py + oy)
-
     def correct(self, ex: float, ey: float, label) -> tuple:
         """Remove a tracking error (ex, ey) found at the current point, spreading it back
-        over the points since the last fix. `label` goes in the fix log; pad_fix uses the
-        pad id, so pass something else for a correction from a pad seen in passing."""
+        over the points since the last fix. `label` goes in the fix log (pad_fix passes the
+        pad id)."""
         start, end = self._last_fix, self.index
         span = end - start
         # Drift grows with distance flown, not with the number of moves (a move may be
@@ -107,11 +98,6 @@ class Tracker:
         self._last_fix = end
         self.fixes.append((end, label, (ex, ey)))
         return ex, ey
-
-    def set_pos(self, x: float, y: float, source: str) -> None:
-        """Overwrite the current point (e.g. after centring over the target)."""
-        self.points[-1] = (float(x), float(y))
-        self.sources[-1] = source
 
     def place(self, index: int, raw_x: float, raw_y: float) -> tuple:
         """Map position of a pad seen at log point `index` with the given raw offset."""

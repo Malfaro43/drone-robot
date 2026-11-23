@@ -74,12 +74,12 @@ def save(cal: dict, path: Path = PATH) -> None:
 def apply_to_flight(cal: dict) -> list:
     """Point the flight code's sign conventions at the measured values. Returns the
     names still unmeasured (worth warning about)."""
-    import find_pad
+    import mission
     import tracker
     tracker.PAD_X_SIGN = value(cal, "drone", "pad_x_sign")
     tracker.PAD_Y_SIGN = value(cal, "drone", "pad_y_sign")
     tracker.YAW_CW_POSITIVE = value(cal, "drone", "yaw_cw_positive")
-    find_pad.GO_Y_SIGN = value(cal, "drone", "go_y_sign")
+    mission.GO_Y_SIGN = value(cal, "drone", "go_y_sign")
     return [k for k in ("pad_x_sign", "pad_y_sign", "yaw_cw_positive", "go_y_sign")
             if not cal["drone"][k]["measured"]]
 

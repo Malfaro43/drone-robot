@@ -1,0 +1,11 @@
+# Only test settings live here; the scripts are run directly (see README).
+[tool.pytest.ini_options]
+testpaths = [
+    "scripts/search",
+    "scripts/dog",
+    "scripts/test_calibrate.py",
+    "tello_xgo_bridge/tests",
+]
+# collect unittest-style test_*.py modules too
+python_files = ["test_*.py"]
+addopts = "-q -p no:cacheprovider"

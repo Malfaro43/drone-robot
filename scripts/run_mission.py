@@ -3,7 +3,7 @@ then the dog walks it.
 
   1. Check the dog answers (before anything flies).
   2. Drone: take off from pad A, search for the target pad, map free/blocked floor, check
-     the dog's route, land on pad A (scripts/search/find_pad.py's Mission, driven through
+     the dog's route, land on pad A (scripts/search/mission.py's Mission, driven through
      bridge.tello.drone).
   3. Save the map. Stop here unless the route was fully checked.
   4. You lift the drone off pad A and confirm the dog's path is clear.
@@ -29,7 +29,7 @@ sys.path[:0] = [str(HERE / "search"), str(HERE / "dog"), str(HERE), str(HERE.par
 
 import calibration  # noqa: E402
 import follow_route  # noqa: E402
-from find_pad import Mission, MissionError  # noqa: E402
+from mission import Mission, MissionError  # noqa: E402
 from flight_common import countdown, preflight  # noqa: E402
 from follow_route import FollowError, RouteFollower  # noqa: E402
 

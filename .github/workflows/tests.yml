@@ -1,0 +1,32 @@
+# Runs on every push and pull request. No hardware: everything uses the simulated drone/dog.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  laptop:
+    name: all tests (Python 3.13, the laptop's version)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      # the tests don't need OpenCV (only tello_camera_stream.py does)
+      - run: pip install djitellopy==2.5.0 "pytest>=8"
+      - run: python -m pytest
+
+  pi:
+    name: Pi-side command code (Python 3.9, the dog's version)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - run: pip install "pytest>=8"
+      - run: python -m pytest tello_xgo_bridge/tests/test_xgo_write.py

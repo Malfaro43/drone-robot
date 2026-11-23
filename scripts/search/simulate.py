@@ -20,7 +20,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from find_pad import CELL, Mission, MissionError
+from mission import CELL, Mission, MissionError
 from sim_drone import FakeTello
 
 HERE = Path(__file__).resolve().parent

@@ -15,7 +15,7 @@ def snap(lo: float, hi: float, cell: int) -> tuple:
     return a, b
 
 
-def _walk(start, goal):
+def walk(start, goal):
     """Unit steps from cell start to goal: x first, then y."""
     (i, j), (gi, gj) = start, goal
     steps = []
@@ -52,8 +52,8 @@ def lawnmower(start, i_range, j_range, lane_cells: int):
     for n, j in enumerate(lanes):
         low_first = begin_low if n % 2 == 0 else not begin_low
         a, b = (i0, i1) if low_first else (i1, i0)
-        steps += _walk(pos, (a, j))
-        steps += _walk((a, j), (b, j))
+        steps += walk(pos, (a, j))
+        steps += walk((a, j), (b, j))
         pos = (b, j)
     return steps
 
@@ -70,6 +70,3 @@ def spiral(rings: int):
         if run > 2 * rings + 1:
             return steps[:(2 * rings + 1) ** 2 - 1]
 
-
-def in_bounds(cell, i_range, j_range) -> bool:
-    return i_range[0] <= cell[0] <= i_range[1] and j_range[0] <= cell[1] <= j_range[1]
