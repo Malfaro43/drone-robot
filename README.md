@@ -86,6 +86,8 @@ Not yet confirmed on the drone (check these before trusting a full run):
 
 Pad A only catches drift that doesn't cancel out on the way home. If every move overshoots by the same fraction, the overshoot cancels on the return and only checkpoint pads (`--pad`) can catch it.
 
+**First session with the real robots:** follow [`docs/HARDWARE_DAY.md`](docs/HARDWARE_DAY.md), a step-by-step runbook (Pi update, network, calibration, first search, first walk) with pass/fail checks.
+
 ## Calibration (`scripts/calibrate.py`)
 
 Measures what the flight and walking code would otherwise guess, and saves it to `calibration.json` (commit it, so everyone uses the same numbers). `find_pad.py`, `follow_route.py` and `run_mission.py` read it and warn about anything still unmeasured; the simulation and tests don't.
