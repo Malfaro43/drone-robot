@@ -43,10 +43,26 @@ class TelloXgoBridge:
         self._open = True
 
     def close(self) -> None:
-        """Release the Tello SDK session.
+        """Stop the dog (best effort), then release the Tello SDK session.
 
         :returns: None.
         """
 
+        try:
+            self.xgo.stop()
+        except Exception:
+            pass
         self.tello.close()
         self._open = False
+
+    def __enter__(self) -> "TelloXgoBridge":
+        """``with TelloXgoBridge(...) as bridge:`` opens, and always closes (stopping the
+        dog) when the block ends, even on an error or Ctrl+C. It does not land the drone:
+        flight code must still land in its own ``finally``.
+        """
+
+        self.open()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()

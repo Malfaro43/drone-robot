@@ -20,6 +20,8 @@ bridge.close()
 - **`read`** returns a `dict` with an `"ok"` flag.
 - **`write`** on the Tello takes one command **string**. **`write`** on the XGO takes **`walk`** and **`yaw`** numbers.
 - XGO **`walk`** and **`yaw`** are xgolib **speed values**, not millimetres or degrees: the dog keeps moving at that speed until the next command. XGO Lite ranges: walk −25…25 (`chase.py` uses 8), yaw −100…100, positive turns left (about 19°/s at 20 on our dog). Values outside the range are refused, on the laptop and on the Pi.
+- **`with TelloXgoBridge(...) as bridge:`** opens both and, however the block ends (error, Ctrl+C), stops the dog and closes the drone session. `bridge.close()` also stops the dog. Neither lands the drone: flight code still lands in its own `finally`.
+- **Drone commands are serialised.** `djitellopy` matches replies to commands only by arrival order, so two threads sending at once can swap replies. The bridge puts one lock around every SDK command, including code that uses `bridge.tello.drone` directly. `bridge.tello.read()` uses only the drone's state stream; `read(wifi=True)` adds the Wi-Fi signal, which is a command and waits its turn. `baro_m` is in metres.
 - **The Pi stops the dog if no command arrives for 1 s** (`CommandWatchdog` in `pi_xgo_bridge/remote_command.py`). While the dog moves, resend the command several times a second; if your program crashes or the network drops, the dog stops by itself.
 - Only **one** program may control the Tello at a time. Do not run `tello_camera_stream.py` while `bridge.open()` is active.
 - On the Pi, start the HTTP server first: `python3 main.py stream` (port 8080).

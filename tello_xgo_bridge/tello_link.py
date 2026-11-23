@@ -11,6 +11,12 @@ Key terms:
       understands over UDP.
     - One controller: Only one program may hold the Tello session; this link
       conflicts with ``tello_camera_stream.py``.
+    - Command lock: djitellopy does not serialise SDK commands, and replies are
+      matched to commands only by arrival order. Two threads sending at once can
+      swap replies (a ``go`` "succeeding" with a battery reading). ``open`` wraps
+      the drone's command sender in a lock, so ``write``, ``read(wifi=True)`` and
+      code using ``.drone`` directly all take turns. State readings (``get_*``)
+      come from the drone's state stream, not commands, and stay lock-free.
 
 Exports:
     - TelloLink: Connected drone handle.
@@ -50,6 +56,7 @@ class TelloLink:
         self._host = host
         self._drone: Any = None
         self._lock = threading.Lock()
+        self._command_lock = threading.RLock()
         self._open = False
 
     def open(self) -> None:
@@ -66,10 +73,27 @@ class TelloLink:
             raise RuntimeError("Install djitellopy on the bridge laptop: pip install djitellopy") from exc
 
         drone = Tello()
+        self._attach(drone)
         drone.connect()
         drone.set_speed(30)
-        self._drone = drone
         self._open = True
+
+    def _attach(self, drone: Any) -> None:
+        """Hold ``drone`` and route every SDK command it sends through one lock.
+
+        :param drone: A ``djitellopy.Tello`` (or a test double with the same method).
+        :returns: None.
+        """
+
+        send = drone.send_command_with_return
+        lock = self._command_lock
+
+        def locked(command: str, *args: Any, **kwargs: Any) -> Any:
+            with lock:
+                return send(command, *args, **kwargs)
+
+        drone.send_command_with_return = locked
+        self._drone = drone
 
     def close(self) -> None:
         """End the SDK session.
@@ -99,9 +123,12 @@ class TelloLink:
             raise RuntimeError("Tello not connected. Call open() first.")
         return self._drone
 
-    def read(self) -> dict[str, Any]:
+    def read(self, wifi: bool = False) -> dict[str, Any]:
         """Return battery, attitude, height, and related fields.
 
+        :param wifi: Also ask for the Wi-Fi signal (``wifi?``). Off by default: unlike
+            the other fields it is an SDK command, so it waits its turn behind any
+            command in flight (a ``go`` can take seconds).
         :returns: JSON-serializable dict with ``ok`` and ``telemetry``.
         """
 
@@ -127,8 +154,10 @@ class TelloLink:
             "telemetry": {
                 "battery_percent": battery,
                 "height_cm": _finite(safe(lambda: d.get_height())),
-                "baro_m": _finite(safe(lambda: d.get_barometer())),
-                "wifi_snr": _finite(safe(lambda: d.query_wifi_signal_noise_ratio())),
+                # djitellopy's get_barometer() is already in cm (baro * 100)
+                "baro_m": _finite(safe(lambda: d.get_barometer() / 100.0)),
+                "wifi_snr": (_finite(safe(lambda: d.query_wifi_signal_noise_ratio()))
+                             if wifi else None),
                 "imu": {
                     "rotation": {
                         "roll": _finite(safe(lambda: d.get_roll())),

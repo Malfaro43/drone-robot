@@ -37,10 +37,11 @@ class XgoLink:
     """HTTP link to one XGO live server on the Pi.
 
     :param pi_url: Scheme, host, and port for the robot process (no path).
-    :param timeout_s: Per-request timeout in seconds.
+    :param timeout_s: Per-request timeout in seconds. Kept short: the Pi stops the dog
+        after 1 s without a command anyway, so a long wait only delays noticing.
     """
 
-    def __init__(self, pi_url: str, timeout_s: float = 8.0) -> None:
+    def __init__(self, pi_url: str, timeout_s: float = 3.0) -> None:
         self._base = pi_url.rstrip("/")
         self._timeout = timeout_s
 
@@ -66,6 +67,14 @@ class XgoLink:
             return json.loads(raw)
         except json.JSONDecodeError:
             return {"ok": False, "error": "Pi returned non-JSON from /stats."}
+
+    def stop(self) -> dict[str, Any]:
+        """Stop the dog (``walk=0, yaw=0``).
+
+        :returns: The Pi's reply.
+        """
+
+        return self.write(walk=0.0, yaw=0.0)
 
     def write(self, walk: float = 0.0, yaw: float = 0.0) -> dict[str, Any]:
         """Post ``{"walk": speed, "yaw": speed}`` to ``POST /command``.
