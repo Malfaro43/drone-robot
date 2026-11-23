@@ -138,13 +138,46 @@ class FakeTello:
         assert max(abs(x), abs(y), abs(z)) >= 20, "SDK rejects moves all inside +-20"
         self.calls.append((x, y))
         # `go` is in the drone's own frame: if it has turned clockwise by yaw degrees,
-        # its "forward" points that much to the right of the map's +x
+        # its "forward" points that much to the right of the map's +x.
+        # Drift (bias, yaw_drift) is per 20 cm flown, so long and short moves compare fairly.
+        k = math.hypot(x, y) / 20
         bx, by = x * (1 + self.move_error[0]), y * (1 + self.move_error[1])
         a = math.radians(self.yaw)
-        self.x += bx * math.cos(a) + by * math.sin(a) + self.bias[0]
-        self.y += -bx * math.sin(a) + by * math.cos(a) + self.bias[1]
-        self.yaw += self.yaw_drift
-        self.t += math.hypot(x, y) / speed + 1.5
+        ex = bx * math.cos(a) + by * math.sin(a) + self.bias[0] * k
+        ey = -bx * math.sin(a) + by * math.cos(a) + self.bias[1] * k
+        travel = math.hypot(x, y) / speed
+        hook = getattr(self, "sample_hook", None)
+        if hook is None:
+            self.x, self.y = self.x + ex, self.y + ey
+            self.t += travel + 1.5
+        else:
+            # Stream state ~10x a second while moving, like the real drone's state packets.
+            # The path eases in and out (smoothstep), while the mission assumes constant
+            # speed: that mismatch is part of what's being tested.
+            x0, y0, t0, total = self.x, self.y, self.t, travel + 1.5
+            lead = 0.75                          # command latency before/after the travel
+            n = max(1, int(total / 0.1))
+            for i in range(1, n + 1):
+                self.t = t0 + total * i / n
+                u = min(1.0, max(0.0, (self.t - t0 - lead) / travel))
+                s = u * u * (3 - 2 * u)
+                self.x, self.y = x0 + ex * s, y0 + ey * s
+                hook(self.snapshot())
+            self.x, self.y, self.t = x0 + ex, y0 + ey, t0 + total
+        self.yaw += self.yaw_drift * k
+
+    sample_hook = None     # set by the mission to receive streamed state during a move
+
+    def clock(self):
+        return self.t
+
+    def snapshot(self):
+        """What the real drone's state stream offers at one instant."""
+        mid = self.get_mission_pad_id()
+        pad = None if mid <= 0 else (mid, self.get_mission_pad_distance_x(),
+                                     self.get_mission_pad_distance_y())
+        return {"t": self.t, "tof": self.get_distance_tof(), "baro": self.get_barometer(),
+                "pad": pad}
 
     def go_xyz_speed_mid(self, x, y, z, speed, mid):
         if self._pad() != mid:

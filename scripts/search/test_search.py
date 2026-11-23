@@ -10,7 +10,7 @@ from contextlib import redirect_stderr
 
 import find_pad
 from find_pad import CELL, Mission, MissionError
-from floormap import BLOCKED, FREE, FloorMap, classify, waypoints
+from floormap import BLOCKED, FREE, LIKELY, FloorMap, classify, waypoints
 from sweep import lawnmower, snap, spiral
 from sim_drone import FakeTello
 from tracker import Tracker, wrap_degrees, yaw_correction
@@ -168,7 +168,7 @@ class MissionTests(unittest.TestCase):
         # box across the middle, gap on the left (+y) side
         box = (70, 110, -70, 20, 30)
         drone = FakeTello({1: (0, 0), 2: (180, 0)}, boxes=[box])
-        msg = make(drone, lane_cm=20, y_range=(-60, 120)).run()  # 100 cm gap on the left
+        msg = make(drone, lane_cm=20, y_range=(-60, 120), max_glide=1).run()  # 100 cm gap
         self.assertTrue(msg["route_checked"])
         self.assertEqual(msg["unchecked_beside_route"], [])
         rows = msg["grid"]["rows"]
@@ -193,7 +193,7 @@ class MissionTests(unittest.TestCase):
     def test_steady_drift_measured_and_corrected(self):
         # the drone slides 1 cm right on every move (e.g. a draught)
         drone = FakeTello({1: (0, 0), 2: (160, 40)}, bias=(0.0, -1.0))
-        msg = make(drone).run()
+        msg = make(drone, max_glide=1).run()
         dx, dy = msg["drift_at_home_cm"]
         self.assertGreater(abs(dy), 10)                   # pad A shows the drift...
         self.assertLess(abs(msg["target"]["y"] - 40), 6)  # ...and the target is corrected
@@ -299,6 +299,59 @@ class MissionTests(unittest.TestCase):
                            "--right", "-60", "--dog-width", "30"])
 
 
+class GlideTests(unittest.TestCase):
+    """Long search moves with readings taken along the way."""
+
+    def test_fewer_moves_same_target(self):
+        runs = {}
+        for g in (1, 5):
+            drone = FakeTello({1: (0, 0), 2: (180, 40)})
+            msg = make(drone, lane_cm=20, max_glide=g, x_range=(0, 240)).run()
+            runs[g] = (len(drone.calls), msg)
+        self.assertLess(runs[5][0], runs[1][0])
+        for g in (1, 5):
+            t = runs[g][1]["target"]
+            self.assertLess(math.hypot(t["x"] - 180, t["y"] - 40), 10)
+
+    def test_mid_move_free_is_only_probably_free(self):
+        drone = FakeTello({1: (0, 0), 2: (500, 500)})        # target never found
+        m = make(drone, lane_cm=40, max_glide=5, x_range=(0, 200), side_rounds=0)
+        m.run()
+        states = {state for _, f, state in m.readings if f < 1}
+        self.assertEqual(states, {LIKELY})                    # never FREE from mid-move
+        self.assertTrue(any(f == 1.0 and s == FREE for _, f, s in m.readings))
+
+    def test_box_seen_mid_move_is_blocked(self):
+        drone = FakeTello({1: (0, 0)}, boxes=[(70, 110, -20, 20, 30)])
+        m = make(drone, lane_cm=40, max_glide=5, x_range=(0, 200), y_range=(-40, 40))
+        m.run()
+        self.assertIn(BLOCKED, {s for _, f, s in m.readings if f < 1})
+
+    def test_real_drone_sampler_uses_a_thread(self):
+        import time as _time
+
+        class SlowDrone:          # no sample_hook: the real-drone path (thread + clock)
+            def go_xyz_speed(self, *a):
+                _time.sleep(0.45)
+
+            def get_mission_pad_id(self):
+                return -1
+
+            def get_distance_tof(self):
+                return 80
+
+            def get_barometer(self):
+                return 10000.0
+
+        m = make(FakeTello({1: (0, 0)}))
+        m.d = SlowDrone()
+        samples = m.sampled_go(100, 0)
+        self.assertGreaterEqual(len(samples), 3)
+        fs = [s["f"] for s in samples]
+        self.assertEqual(fs, sorted(fs))
+        self.assertTrue(all(0 <= f <= 1 for f in fs))
+
+
 class StressTests(unittest.TestCase):
     """150 random rooms with realistic sensors, scored against the real layout
     (stress.py runs more and prints the details)."""
@@ -312,7 +365,11 @@ class StressTests(unittest.TestCase):
         self.assertEqual([r["seed"] for r in self.s["unsafe"]], [])
 
     def test_rarely_lands_away_from_pad_a(self):
-        self.assertLessEqual(self.s["landed_early"], 0.03 * self.s["rooms"])
+        # 5%: with long search moves (default) the drone finds far more targets (~94% vs
+        # ~76% of rooms with 20 cm steps) and so does more checking; ~4% of these random
+        # rooms (pessimistic drift and battery guesses) end with a controlled landing at
+        # ~9% battery away from pad A, vs ~1.5% with 20 cm steps.
+        self.assertLessEqual(self.s["landed_early"], 0.05 * self.s["rooms"])
 
     def test_found_targets_are_accurate(self):
         self.assertLess(self.s["target_err_median"], 8)

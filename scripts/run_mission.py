@@ -93,7 +93,7 @@ def run_real(args) -> int:
         mission = Mission(drone, target=args.target, origin=args.origin,
                           x_range=(-args.back, args.forward), y_range=(-args.right, args.left),
                           dog_width=args.dog_width, margin=args.margin, lane_cm=args.lanes,
-                          obstacle_signal=args.obstacle_signal)
+                          obstacle_signal=args.obstacle_signal, max_glide=args.glide)
         problem = preflight(drone, ignore_temp=args.ignore_temp)
         if problem:
             print(problem)
@@ -180,6 +180,8 @@ def main(argv=None) -> int:
     p.add_argument("--dog-width", type=float, default=30)
     p.add_argument("--margin", type=float, default=10)
     p.add_argument("--lanes", type=float, default=40)
+    p.add_argument("--glide", type=int, default=5,
+                   help="longest search move in 20 cm squares (1 = stop every 20 cm)")
     p.add_argument("--obstacle-signal", choices=["tof", "tof+baro"],
                    help="default: tof+baro if calibration found the drone climbs over boxes")
     p.add_argument("--dog-start", default="0,30",

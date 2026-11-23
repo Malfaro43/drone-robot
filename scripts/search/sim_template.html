@@ -10,7 +10,7 @@
   --grid: #e7e5de; --free: #cfe8d5; --blocked: #e9806a; --unknown: transparent;
   --truth: #7a5a2e; --drop: #3f6fb0; --pad: #2b2f36; --target: #b8324f;
   --drone: #1d1f22; --est: #2f7de1; --trail: #9aa0a6; --route: #2f9e62; --dog: #c77a14;
-  --accent: #2f7de1; --chip: #eceae4; --warn: #d98a00;
+  --accent: #2f7de1; --chip: #eceae4; --warn: #d98a00; --likely: #e6f0e8;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -18,7 +18,7 @@
     --bg: #15171a; --panel: #1d2024; --ink: #e8e6e1; --muted: #9a9ea5; --line: #30343a;
     --grid: #262a2f; --free: #234a33; --blocked: #b85b47; --truth: #d2a868; --drop: #6f9de0;
     --pad: #d9d6cf; --target: #ef6f8b; --drone: #f2f0ea; --est: #63a4ff; --trail: #5d636b;
-    --route: #4cc483; --dog: #f0a43c; --accent: #63a4ff; --chip: #2a2e34; --warn: #f2b33d;
+    --route: #4cc483; --dog: #f0a43c; --accent: #63a4ff; --chip: #2a2e34; --warn: #f2b33d; --likely: #1f3328;
     color-scheme: dark;
   }
 }
@@ -26,7 +26,7 @@
   --bg: #15171a; --panel: #1d2024; --ink: #e8e6e1; --muted: #9a9ea5; --line: #30343a;
   --grid: #262a2f; --free: #234a33; --blocked: #b85b47; --truth: #d2a868; --drop: #6f9de0;
   --pad: #d9d6cf; --target: #ef6f8b; --drone: #f2f0ea; --est: #63a4ff; --trail: #5d636b;
-  --route: #4cc483; --dog: #f0a43c; --accent: #63a4ff; --chip: #2a2e34; --warn: #f2b33d;
+  --route: #4cc483; --dog: #f0a43c; --accent: #63a4ff; --chip: #2a2e34; --warn: #f2b33d; --likely: #1f3328;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -121,6 +121,7 @@ kbd { font: 12px ui-monospace, Menlo, monospace; border: 1px solid var(--line); 
         <div class="legend">
           <span class="sw" style="background:var(--free)"></span><span>marked free by the drone</span>
           <span class="sw" style="background:var(--blocked)"></span><span>marked blocked (box or drop)</span>
+          <span class="sw" style="background:var(--likely);border:1px solid var(--free)"></span><span>probably free (seen mid-move, not yet confirmed)</span>
           <span class="sw" style="border:2px dashed var(--truth)"></span><span>real box (the drone can't see this)</span>
           <span class="sw" style="border:2px dashed var(--drop)"></span><span>real step down</span>
           <span class="sw" style="background:var(--drone);border-radius:50%"></span><span>drone, real position</span>
@@ -179,7 +180,7 @@ function rectWorld(x0, x1, y0, y1) { return [sx(y1), sy(x1), (y1 - y0) * S, (x1 
 
 function drawGrid(rows) {
   const i0 = D.area.i[0], j0 = D.area.j[0];
-  const col = { ".": css("--free"), "#": css("--blocked") };
+  const col = { ".": css("--free"), "#": css("--blocked"), "o": css("--likely") };
   rows.forEach((row, a) => [...row].forEach((ch, b) => {
     const cx = (i0 + a) * C, cy = (j0 + b) * C;
     const [x, y, w, h] = rectWorld(cx - C / 2, cx + C / 2, cy - C / 2, cy + C / 2);

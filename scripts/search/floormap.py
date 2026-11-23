@@ -21,8 +21,12 @@ import heapq
 import math
 
 FREE, BLOCKED, UNKNOWN = ".", "#", "?"
+# Read only in passing, mid-move: where exactly the reading was taken is less certain, so it
+# guides the search but never counts as checked for the dog. A stopped reading confirms it.
+LIKELY = "o"
 TOF_INVALID = 600  # cm; readings at or above this are "no reading"
 UNKNOWN_COST = 3.0
+LIKELY_COST = 1.5
 CLEARANCE_COST = 50.0  # in-flight only: crossing a square too close to an obstacle for the dog
 
 
@@ -53,7 +57,8 @@ class FloorMap:
     def mark(self, c, state: str) -> None:
         if not self.inside(c):
             return
-        if self.cells.get(c) == BLOCKED:
+        old = self.cells.get(c)
+        if old == BLOCKED or (old == FREE and state == LIKELY):
             return
         self.cells[c] = state
 
@@ -69,7 +74,8 @@ class FloorMap:
         if strict or edges:
             (i0, i1), (j0, j1) = self.i_range, self.j_range
             sources += [(i, j) for i in range(i0 - r, i1 + r + 1) for j in range(j0 - r, j1 + r + 1)
-                        if not self.inside((i, j)) or (strict and self.get((i, j)) == UNKNOWN)]
+                        if not self.inside((i, j))
+                        or (strict and self.get((i, j)) in (UNKNOWN, LIKELY))]
         out = set()
         for bi, bj in sources:
             for di in range(-r, r + 1):
@@ -107,7 +113,7 @@ class FloorMap:
         def cost(c):
             if c in blocked:
                 return CLEARANCE_COST
-            return UNKNOWN_COST if self.get(c) == UNKNOWN else 1.0
+            return {UNKNOWN: UNKNOWN_COST, LIKELY: LIKELY_COST}.get(self.get(c), 1.0)
 
         def h(c):
             return abs(c[0] - goal[0]) + abs(c[1] - goal[1])
@@ -144,7 +150,7 @@ class FloorMap:
                 for dj in range(-r, r + 1):
                     c = (ci + di, cj + dj)
                     if (math.hypot(di, dj) * self.cell <= radius_cm and self.inside(c)
-                            and self.get(c) == UNKNOWN):
+                            and self.get(c) in (UNKNOWN, LIKELY)):
                         out.add(c)
         return sorted(out)
 

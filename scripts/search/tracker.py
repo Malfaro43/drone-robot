@@ -72,18 +72,40 @@ class Tracker:
         px, py = self.known_pads[pad_id]
         ox, oy = self.pad_offset(raw_x, raw_y)
         ex, ey = self.points[-1][0] - (px + ox), self.points[-1][1] - (py + oy)
+        return self.correct(ex, ey, pad_id)
+
+    def error_at(self, est: tuple, pad_id: int, raw_x: float, raw_y: float):
+        """Tracking error (ex, ey) at an estimated position `est` where a known pad was
+        seen with this raw offset (e.g. mid-move), or None if the pad isn't known."""
+        if pad_id not in self.known_pads:
+            return None
+        px, py = self.known_pads[pad_id]
+        ox, oy = self.pad_offset(raw_x, raw_y)
+        return est[0] - (px + ox), est[1] - (py + oy)
+
+    def correct(self, ex: float, ey: float, label) -> tuple:
+        """Remove a tracking error (ex, ey) found at the current point, spreading it back
+        over the points since the last fix. `label` goes in the fix log; pad_fix uses the
+        pad id, so pass something else for a correction from a pad seen in passing."""
         start, end = self._last_fix, self.index
         span = end - start
+        # Drift grows with distance flown, not with the number of moves (a move may be
+        # 20 cm or 1 m), so each point takes its share by distance flown since the last fix.
+        run = [0.0]
         for i in range(start + 1, end + 1):
-            frac = (i - start) / span
+            (ax, ay), (bx, by) = self.points[i - 1], self.points[i]
+            run.append(run[-1] + math.hypot(bx - ax, by - ay))
+        total = run[-1]
+        for i in range(start + 1, end + 1):
+            frac = run[i - start] / total if total > 0 else (i - start) / span
             x, y = self.points[i]
             self.points[i] = (x - ex * frac, y - ey * frac)
         if span == 0:  # fixed twice at the same point: just overwrite it
             x, y = self.points[end]
             self.points[end] = (x - ex, y - ey)
-        self.sources[end] = f"pad {pad_id}"
+        self.sources[end] = f"pad {label}"
         self._last_fix = end
-        self.fixes.append((end, pad_id, (ex, ey)))
+        self.fixes.append((end, label, (ex, ey)))
         return ex, ey
 
     def set_pos(self, x: float, y: float, source: str) -> None:

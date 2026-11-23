@@ -161,7 +161,7 @@ class RecordingMission(Mission):
 
 
 def run(name: str, sc: dict, dog_width: float, margin: float, ideal: bool = False,
-        signal: str = None, seed: int = 0) -> dict:
+        signal: str = None, seed: int = 0, **mission_kw) -> dict:
     a = sc["area"]
     trouble = {} if ideal else dict(REALISM)
     trouble.update(sc.get("drone", {}))
@@ -171,7 +171,8 @@ def run(name: str, sc: dict, dog_width: float, margin: float, ideal: bool = Fals
     signal = signal or sc.get("signal", "tof")
     m = RecordingMission(drone, target=2, x_range=(-a["back"], a["forward"]),
                          y_range=(-a["right"], a["left"]), dog_width=dog_width, margin=margin,
-                         lane_cm=sc["lanes"], pads=sc.get("known", {}), obstacle_signal=signal)
+                         lane_cm=sc["lanes"], pads=sc.get("known", {}), obstacle_signal=signal,
+                         **mission_kw)
     error = None
     try:
         msg = m.run()

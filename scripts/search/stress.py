@@ -38,9 +38,10 @@ def clearance(route, boxes) -> float:
     return best
 
 
-def evaluate(seed: int, dog_width=DOG_WIDTH, margin=MARGIN, ideal=False) -> dict:
+def evaluate(seed: int, dog_width=DOG_WIDTH, margin=MARGIN, ideal=False, **mission_kw) -> dict:
     sc = simulate.random_scenario(seed)
-    data = simulate.run(f"seed {seed}", sc, dog_width, margin, ideal=ideal, seed=seed)
+    data = simulate.run(f"seed {seed}", sc, dog_width, margin, ideal=ideal, seed=seed,
+                        **mission_kw)
     msg, last = data["map"], data["frames"][-1]
     tx, ty = sc["pads"][2]
     t = msg["target"]
@@ -84,9 +85,11 @@ def main(argv=None) -> int:
     p.add_argument("--first-seed", type=int, default=1)
     p.add_argument("--ideal", action="store_true", help="perfect sensors")
     p.add_argument("--show-worst", type=int, default=3)
+    p.add_argument("--glide", type=int, help="longest search move in squares (1 = 20 cm steps)")
     args = p.parse_args(argv)
+    kw = {} if args.glide is None else {"max_glide": args.glide}
 
-    results = [evaluate(s, ideal=args.ideal)
+    results = [evaluate(s, ideal=args.ideal, **kw)
                for s in range(args.first_seed, args.first_seed + args.rooms)]
     s = summarise(results)
     n = s["rooms"]
