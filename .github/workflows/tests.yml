@@ -23,10 +23,10 @@ jobs:
   pi:
     name: Pi-side command code (Python 3.9, the dog's version)
     runs-on: ubuntu-latest
+    # Python 3.9 is past end of life and setup-python no longer has it for current
+    # Ubuntu runners, so use the official image instead.
+    container: python:3.9-slim
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.9"
       - run: pip install "pytest>=8"
       - run: python -m pytest tello_xgo_bridge/tests/test_xgo_write.py
